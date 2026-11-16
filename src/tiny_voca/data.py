@@ -11,9 +11,10 @@ from pathlib import Path
 import torch
 from torch.nn.utils.rnn import pad_sequence
 
-from .text import PHONE_IDS, SYMBOL_TO_ID, VOWELS, frontend_fingerprint
+from .languages import ENGLISH
+from .text import frontend_fingerprint
 
-VOWEL_IDS = frozenset(SYMBOL_TO_ID[v] for v in VOWELS)
+VOWEL_IDS = ENGLISH.vowel_ids   # English (legacy) alias; datasets use their config's profile
 
 
 def continuous_pitch(pitch, voiced, default=0.0, window=5, tolerance=0.45):
@@ -62,7 +63,9 @@ class AnnotatedDataset:
         self.config = config
         if not self.rows:
             raise ValueError("empty dataset")
-        frontend = frontend_fingerprint()
+        profile = config.profile
+        frontend = frontend_fingerprint(profile)
+        self.phone_ids, self.vowel_ids = profile.phone_ids, profile.vowel_ids
         for row in self.rows:
             if "durations" not in row or row.get("frontend") != frontend:
                 raise ValueError("tokens were produced by a different front end; re-run annotation")
@@ -74,7 +77,7 @@ class AnnotatedDataset:
                 raise ValueError(f"token/duration length mismatch: {row['id']}")
             if sum(row["durations"]) != row["frames"] or min(row["durations"]) < 0:
                 raise ValueError(f"durations do not cover the frames exactly: {row['id']}")
-            if any(d < 1 for t, d in zip(row["tokens"], row["durations"]) if t in PHONE_IDS):
+            if any(d < 1 for t, d in zip(row["tokens"], row["durations"]) if t in self.phone_ids):
                 raise ValueError(f"phoneme without frames: {row['id']}")
             if not 0 < len(row["tokens"]) <= config.max_tokens or not 0 < row["frames"] <= config.max_frames:
                 raise ValueError(f"utterance exceeds model limits: {row['id']}")
@@ -117,7 +120,7 @@ class AnnotatedDataset:
             # and a model trained on those labels drops whole vowels. A vowel is voiced
             # by definition: mark its frames voiced. Their pitch stays interpolated and
             # untrusted, so the pitch loss still ignores what the tracker did not measure.
-            vowel = torch.repeat_interleave(torch.tensor([t in VOWEL_IDS for t in row["tokens"]]), torch.tensor(row["durations"]))
+            vowel = torch.repeat_interleave(torch.tensor([t in self.vowel_ids for t in row["tokens"]]), torch.tensor(row["durations"]))
             voiced = torch.maximum(voiced, vowel.to(voiced.dtype))
         item = {
             "tokens": torch.tensor(row["tokens"], dtype=torch.long), "stress": torch.tensor(row["stress"], dtype=torch.long),

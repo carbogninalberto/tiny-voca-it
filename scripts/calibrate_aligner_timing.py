@@ -20,9 +20,9 @@ import torch
 
 from tiny_voca.align import ALIGNER_RATE, ALIGNER_STRIDE, PhoneRecognizer, token_spans
 from tiny_voca.config import Config
-from tiny_voca.text import PHONE_SET, VOWEL_SET, phonemize
+from tiny_voca.text import phonemize
 
-FRICATIVES, STOPS = {"f", "θ", "s", "ʃ"}, {"p", "t", "k"}
+STOPS = {"p", "t", "k"}
 
 
 def main():
@@ -32,15 +32,18 @@ def main():
     parser.add_argument("--count", type=int, default=300)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--config", type=Path, help="Model config (its language selects the profile; default English)")
     args = parser.parse_args()
-    c = Config()
-    recognizer = PhoneRecognizer(args.device)
+    c = Config.from_dict(json.loads(args.config.read_text())) if args.config else Config()
+    profile = c.profile
+    PHONE_SET, VOWEL_SET, FRICATIVES = profile.phone_set, profile.vowel_set, profile.fricatives
+    recognizer = PhoneRecognizer(args.device, profile=profile)
     rows = [json.loads(line) for line in (args.features / (args.split + ".jsonl")).read_text(encoding="utf-8").split("\n") if line.strip()][:args.count]
     offsets, runs = collections.defaultdict(list), collections.Counter()
     for row in rows:
         stored = torch.load(args.features / row["path"], map_location="cpu", weights_only=True)
         voiced = stored["prosody"][:, 1].numpy() > 0.5
-        symbols = phonemize(row["text"]).symbols
+        symbols = phonemize(row["text"], profile).symbols
         position = [i for i, s in enumerate(symbols) if s in PHONE_SET]
         names = [symbols[i] for i in position]
         log_probs = recognizer.log_probs(stored["wave"].numpy(), c.sample_rate)

@@ -8,22 +8,38 @@ from .text import FRONTEND_VARIABLE, FRONTENDS, frontend_fingerprint, phonemize,
 
 
 def load_model(path, device="cpu", check_frontend=True):
-    """``check_frontend=False`` lets a checkpoint speak tokens of the other
-    front end (same inventory, slightly different conventions): for listening
-    tests of the new phonemizer before the model is retrained on it."""
+    """``check_frontend=False`` lets an ENGLISH checkpoint speak tokens of the
+    other English front end (same inventory, slightly different conventions):
+    for listening tests of the new phonemizer before the model is retrained on
+    it. A checkpoint without language metadata is legacy English; a language
+    profile mismatch is always an error."""
     state = torch.load(path, map_location="cpu", weights_only=True)
     if state.get("format_version") != CHECKPOINT_FORMAT:
         raise ValueError("unsupported checkpoint format: byte-token checkpoints (format 2-3) cannot be used with this code")
-    if check_frontend and state["frontend"]["fingerprint"] != frontend_fingerprint():
+    config = Config.from_dict(state["config"])
+    profile = config.profile
+    recorded = state.get("language")
+    if profile.language != "en":
+        if not recorded or recorded.get("language") != profile.language or recorded.get("profile_digest") != profile.digest:
+            raise ValueError(f"checkpoint's {profile.language!r} language profile differs from this code's (digest mismatch)")
+        if state["frontend"]["fingerprint"] != frontend_fingerprint(profile):
+            raise ValueError("checkpoint was trained with a different phoneme inventory/front end")
+    elif recorded is not None and recorded.get("language", "en") != "en":
+        raise ValueError("checkpoint language metadata contradicts its configuration")
+    elif check_frontend and state["frontend"]["fingerprint"] != frontend_fingerprint():
         raise ValueError("checkpoint was trained with a different phoneme inventory/front end")
-    model = TinyVoca(Config.from_dict(state["config"]))
+    model = TinyVoca(config)
     model.load_state_dict(state["model"], strict=True)
     return model.to(device).eval()
 
 
 def match_frontend(path):
-    """Select the front end the checkpoint was trained with."""
-    wanted = torch.load(path, map_location="cpu", weights_only=True)["frontend"]["fingerprint"]
+    """Select the English front end the checkpoint was trained with (other
+    languages have exactly one front end, chosen by their profile)."""
+    state = torch.load(path, map_location="cpu", weights_only=True)
+    if state["config"].get("language", "en") != "en":
+        return "espeak"
+    wanted = state["frontend"]["fingerprint"]
     for name in FRONTENDS:
         set_frontend(name)
         try:
@@ -38,11 +54,15 @@ def match_frontend(path):
 def speak(model, text, voice, speed=1.0, pitch_shift=0.0, seed=0, pitch_range=1.0):
     """Text -> (float waveform tensor, phonemized text). Same front end as training."""
     device = next(model.parameters()).device
-    phones = phonemize(text)
+    phones = phonemize(text, model.config.profile)
     if len(phones) > model.config.max_tokens:
         raise ValueError("text is too long for one utterance; split it into sentences")
     tokens = torch.tensor([phones.ids], device=device)
     stress = torch.tensor([phones.stress], device=device)
+    if voice is None:
+        voice = model.config.speakers[0]
+    if voice not in model.config.speakers:
+        raise ValueError(f"unknown voice {voice!r}; this checkpoint has {list(model.config.speakers)}")
     speaker = torch.tensor([model.config.speakers.index(voice)], device=device)
     audio, lengths, details = model.synthesize(tokens, stress, torch.tensor([len(phones)], device=device), speaker, speed, pitch_shift, seed, pitch_range)
     if not torch.isfinite(audio).all():
@@ -54,7 +74,7 @@ def main():
     parser = argparse.ArgumentParser(description="Generate speech from a trained tiny-voca inference checkpoint")
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--text", required=True)
-    parser.add_argument("--voice", choices=("F2", "M2"), default="F2")
+    parser.add_argument("--voice", help="Voice name stored in the checkpoint (default: its first voice)")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--speed", type=float, default=1)
     parser.add_argument("--pitch-shift", type=float, default=0, help="Added to log F0 (0.058 is about one semitone)")
@@ -70,6 +90,8 @@ def main():
     elif FRONTEND_VARIABLE not in os.environ:
         match_frontend(args.checkpoint)
     model = load_model(args.checkpoint, args.device, check_frontend=not args.allow_frontend_mismatch)
+    if args.voice is not None and args.voice not in model.config.speakers:
+        parser.error(f"unknown voice {args.voice!r}; available: {', '.join(model.config.speakers)}")
     wave, phones, _ = speak(model, args.text, args.voice, args.speed, args.pitch_shift, pitch_range=args.pitch_range)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     # Floating WAV preserves output for inspection; no silent clipping or normalization.

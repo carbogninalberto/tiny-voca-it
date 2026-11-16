@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tiny-voca · Italian playground</title>
+<style>
+  :root {
+    --bg: #f6f4ef; --panel: #ffffff; --ink: #1d1b18; --muted: #6b665d; --line: #e3ded3;
+    --accent: #0b7a5a; --accent-ink: #ffffff; --accent-soft: #e2f2ec; --warn: #b3261e; --chip: #efebe2;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151513; --panel: #1f1f1c; --ink: #ecebe6; --muted: #a29e94; --line: #34332e;
+            --accent: #3fbf93; --accent-ink: #0d1a15; --accent-soft: #1d3129; --warn: #f2948c; --chip: #2a2925;
+            color-scheme: dark; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 28px 18px 60px; }
+  header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+  h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
+  h1 span { color: var(--accent); }
+  .meta { color: var(--muted); font-size: 13px; }
+  .grid { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 16px; }
+  @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 6px; }
+  textarea { width: 100%; min-height: 150px; resize: vertical; border: 1px solid var(--line); border-radius: 10px; padding: 12px;
+             font: 17px/1.5 inherit; font-family: inherit; background: var(--bg); color: var(--ink); }
+  textarea:focus, select:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; }
+  .chip { border: 0; background: var(--chip); color: var(--ink); border-radius: 999px; padding: 4px 10px; font-size: 12.5px; cursor: pointer; }
+  .chip:hover { background: var(--accent-soft); }
+  .row { display: flex; gap: 10px; align-items: center; margin-top: 14px; flex-wrap: wrap; }
+  .speak { background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 10px; padding: 10px 22px; font-size: 15px; font-weight: 600; cursor: pointer; }
+  .speak[disabled] { opacity: .55; cursor: progress; }
+  .hint { color: var(--muted); font-size: 12.5px; }
+  select { width: 100%; padding: 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); font: inherit; }
+  .control { margin-bottom: 14px; }
+  .control output { float: right; font-family: var(--mono); font-size: 12px; color: var(--ink); text-transform: none; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .reset { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 8px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
+  .error { color: var(--warn); font-size: 14px; margin-top: 10px; }
+  .history { margin-top: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .take { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  .take .text { font-size: 15px; margin-bottom: 8px; }
+  .take audio { width: 100%; height: 36px; }
+  .take .facts { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .take details { margin-top: 6px; }
+  .take summary { font-size: 12px; color: var(--muted); cursor: pointer; }
+  .take pre { font-family: var(--mono); font-size: 12px; white-space: pre-wrap; word-break: break-word; margin: 6px 0 0; color: var(--ink); }
+  .take a { color: var(--accent); }
+  .empty { color: var(--muted); font-size: 14px; padding: 20px; text-align: center; border: 1px dashed var(--line); border-radius: 12px; }
+  kbd { font-family: var(--mono); font-size: 11px; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>tiny-voca <span>italiano</span></h1>
+    <div class="meta" id="meta">loading model…</div>
+  </header>
+
+  <div class="grid">
+    <section class="panel">
+      <label for="text">Text</label>
+      <textarea id="text" spellcheck="false">Buongiorno! Questa è una prova del modello tiny-voca, addestrato da zero sulla lingua italiana.</textarea>
+      <div class="chips" id="chips"></div>
+      <div class="row">
+        <button class="speak" id="speak">Speak</button>
+        <span class="hint"><kbd>Ctrl</kbd>+<kbd>Enter</kbd> to speak · long text is read sentence by sentence</span>
+      </div>
+      <div class="error" id="error" hidden></div>
+    </section>
+
+    <aside class="panel">
+      <div class="control"><label for="checkpoint">Model</label><select id="checkpoint"></select></div>
+      <div class="control"><label for="voice">Voice</label><select id="voice"></select></div>
+      <div class="control"><label for="speed">Speed <output id="speed-out">1.00×</output></label>
+        <input type="range" id="speed" min="0.6" max="1.6" step="0.05" value="1"></div>
+      <div class="control"><label for="pitch">Pitch <output id="pitch-out">0 st</output></label>
+        <input type="range" id="pitch" min="-6" max="6" step="0.5" value="0"></div>
+      <div class="control"><label for="range">Intonation <output id="range-out">1.00</output></label>
+        <input type="range" id="range" min="0.5" max="1.8" step="0.05" value="1"></div>
+      <div class="control"><label for="seed">Noise seed <output id="seed-out">0</output></label>
+        <input type="range" id="seed" min="0" max="20" step="1" value="0"></div>
+      <button class="reset" id="reset">Reset controls</button>
+    </aside>
+  </div>
+
+  <div class="history" id="history"><div class="empty" id="empty">Generated audio will appear here.</div></div>
+</main>
+
+<script>
+const SAMPLES = [
+  ["Geminate", "La palla è caduta sulla pala. Mi fa pena quella penna rotta."],
+  ["Nonno / nono", "Il nonno è arrivato nono alla gara di corsa."],
+  ["gn / gl", "Ho mangiato gli gnocchi con mio figlio e sua moglie."],
+  ["Accenti", "Perché la città è così silenziosa stasera?"],
+  ["Numeri", "Il treno parte alle 12:30 dal binario 7 e il biglietto costa € 25,50."],
+  ["Elisione", "L'amico di un'altra persona mi ha offerto un po' d'acqua."],
+  ["Domanda", "Hai già prenotato il ristorante per domani sera?"],
+  ["Lungo", "Quando finalmente arrivammo in cima alla montagna, il sole stava tramontando e l'aria era fresca e limpida."],
+  ["Bar", "Buongiorno, vorrei un cappuccino e un cornetto, per favore."],
+];
+const $ = (id) => document.getElementById(id);
+const controls = { speed: [1, v => `${(+v).toFixed(2)}×`], pitch: [0, v => `${v > 0 ? "+" : ""}${v} st`],
+                   range: [1, v => (+v).toFixed(2)], seed: [0, v => v] };
+let info = null, busy = false;
+
+for (const [label, text] of SAMPLES) {
+  const b = document.createElement("button");
+  b.className = "chip"; b.textContent = label; b.title = text;
+  b.onclick = () => { $("text").value = text; speak(); };
+  $("chips").append(b);
+}
+for (const [id, [, fmt]] of Object.entries(controls)) {
+  const update = () => { $(`${id}-out`).textContent = fmt($(id).value); };
+  $(id).addEventListener("input", update); update();
+}
+$("reset").onclick = () => { for (const [id, [d, fmt]] of Object.entries(controls)) { $(id).value = d; $(`${id}-out`).textContent = fmt(d); } };
+
+function fillVoices() {
+  const entry = info.checkpoints.find(c => c.name === $("checkpoint").value) || info.checkpoints[0];
+  $("voice").replaceChildren(...entry.voices.map(v => new Option(v, v)));
+  $("meta").textContent = `${entry.name} · ${entry.language} · step ${entry.step ?? "?"}${entry.adapted ? " · adapted voice" : ""}`;
+}
+
+async function load() {
+  try {
+    info = await (await fetch("/api/info")).json();
+    $("checkpoint").replaceChildren(...info.checkpoints.map(c => new Option(`${c.name} (step ${c.step ?? "?"})`, c.name)));
+    $("checkpoint").onchange = fillVoices;
+    fillVoices();
+  } catch (e) { $("meta").textContent = "server not reachable — start scripts/playground.py"; }
+}
+
+function showError(message) { $("error").textContent = message; $("error").hidden = !message; }
+
+async function speak() {
+  if (busy) return;
+  const text = $("text").value.trim();
+  if (!text) return showError("Type some text first.");
+  busy = true; $("speak").disabled = true; $("speak").textContent = "Speaking…"; showError("");
+  try {
+    const body = { text, checkpoint: $("checkpoint").value, voice: $("voice").value, speed: +$("speed").value,
+                   pitch_shift: +$("pitch").value, pitch_range: +$("range").value, seed: +$("seed").value };
+    const response = await fetch("/api/speak", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || `HTTP ${response.status}`);
+    const details = JSON.parse(response.headers.get("X-Details") || "{}");
+    const url = URL.createObjectURL(await response.blob());
+    addTake(text, url, details, body);
+  } catch (e) { showError(e.message); }
+  finally { busy = false; $("speak").disabled = false; $("speak").textContent = "Speak"; }
+}
+
+function addTake(text, url, d, body) {
+  $("empty")?.remove();
+  const take = document.createElement("div");
+  take.className = "take";
+  const rtf = d.compute_seconds ? Math.round(d.seconds / d.compute_seconds) : "?";
+  take.innerHTML = `<div class="text"></div><audio controls autoplay></audio>
+    <div class="facts"><span>${d.voice} · ${body.checkpoint}</span><span>${d.seconds}s audio</span><span>${d.compute_seconds}s compute (${rtf}× real time)</span>
+    <span>speed ${body.speed} · pitch ${body.pitch_shift} st · intonation ${body.pitch_range}</span><a download="tiny-voca.wav">download</a></div>
+    <details><summary>phonemes</summary><pre></pre></details>`;
+  take.querySelector(".text").textContent = text;
+  take.querySelector("audio").src = url;
+  take.querySelector("a").href = url;
+  take.querySelector("pre").textContent = d.phonemes || "";
+  $("history").prepend(take);
+}
+
+$("speak").onclick = speak;
+$("text").addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); speak(); } });
+load();
+</script>
+</body>
+</html>

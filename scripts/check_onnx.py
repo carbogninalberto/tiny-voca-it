@@ -30,6 +30,14 @@ SENTENCES = (
     "After a long and difficult journey across the mountains, the travellers finally reached the small village, "
     "where they were welcomed with warm food, a place to sleep and many questions about the road behind them.",
 )
+ITALIAN_SENTENCES = (
+    "Ciao! Questo è tiny voca.",
+    "Oggi il tempo è bello, e mi sento molto rilassato.",
+    "Hai davvero pagato € 42,50 per quella borsa il 3 marzo 2024?",
+    "La palla è caduta sulla pala, e il nonno è arrivato nono.",
+    "Dopo un viaggio lungo e difficile attraverso le montagne, i viaggiatori raggiunsero finalmente il piccolo villaggio, "
+    "dove furono accolti con cibo caldo, un posto per dormire e molte domande sulla strada percorsa.",
+)
 
 
 def session(path, threads):
@@ -55,13 +63,16 @@ def main():
     torch.set_num_threads(args.threads)
     match_frontend(args.checkpoint)
     model = load_model(args.checkpoint, "cpu")
+    global SENTENCES
+    if model.config.language == "it":
+        SENTENCES = ITALIAN_SENTENCES
     wrapper = Exportable(model, external_noise=True).eval()
     exact = session(args.onnx, args.threads)
     args.output.mkdir(parents=True, exist_ok=True)
     rate, hop = model.config.sample_rate, model.config.hop
     rows = []
     for number, text in enumerate(SENTENCES):
-        phones = phonemize(text)
+        phones = phonemize(text, model.config.profile)
         for voice, name in enumerate(model.config.speakers):
             tokens, stress = torch.tensor([phones.ids]), torch.tensor([phones.stress])
             reference, lengths, details = model.synthesize(tokens, stress, torch.tensor([len(phones)]), torch.tensor([voice]))
@@ -87,7 +98,7 @@ def main():
     if args.release:
         release = session(args.release, args.threads)
         text = SENTENCES[1]
-        phones = phonemize(text)
+        phones = phonemize(text, model.config.profile)
         for voice, name in enumerate(model.config.speakers):
             feed = feeds(phones, voice)
             for _ in range(5):
@@ -110,7 +121,7 @@ def main():
                               "torch_seconds": round(statistics.median(torch_times), 4),
                               "torch_rtfx": round(seconds / statistics.median(torch_times), 1)}))
             for number, sentence in enumerate(SENTENCES):
-                audio = release.run(None, feeds(phonemize(sentence), voice))[0]
+                audio = release.run(None, feeds(phonemize(sentence, model.config.profile), voice))[0]
                 sf.write(args.output / f"s{number}-{name}-onnx.wav", audio[0], rate)
                 print(json.dumps({"release_sentence": number, "voice": name, "seconds": round(audio.shape[1] / rate, 2),
                                   "peak": round(float(np.abs(audio).max()), 3), "finite": bool(np.isfinite(audio).all())}))

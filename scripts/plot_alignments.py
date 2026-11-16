@@ -14,7 +14,6 @@ import torch
 from tiny_voca.align import frame_energy_db
 from tiny_voca.config import Config
 from tiny_voca.data import continuous_pitch
-from tiny_voca.text import PHONE_SET
 
 
 def main():
@@ -23,11 +22,12 @@ def main():
     parser.add_argument("--split", default="validation")
     parser.add_argument("--per-voice", type=int, default=3)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--config", type=Path, help="Model config (its language selects the phone classes)")
     args = parser.parse_args()
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    c = Config()
+    c = Config.from_dict(json.loads(args.config.read_text())) if args.config else Config()
     rows = [json.loads(line) for line in (args.annotations / (args.split + ".jsonl")).read_text(encoding="utf-8").split("\n") if line.strip()]
     root = Path(json.loads((args.annotations / "annotations.json").read_text())["acoustic_root"])
     args.output.mkdir(parents=True, exist_ok=True)
@@ -50,7 +50,7 @@ def main():
         for symbol, start, end, duration in zip(symbols, starts, ends, durations):
             if duration == 0:
                 continue
-            phone = symbol in PHONE_SET
+            phone = symbol in c.profile.phone_set
             top.axvline(start - 0.5 * c.hop / c.sample_rate, color="white", linewidth=0.6, alpha=0.9)
             if not phone:
                 top.axvspan(start - 0.5 * c.hop / c.sample_rate, end - 0.5 * c.hop / c.sample_rate, color="cyan", alpha=0.18)

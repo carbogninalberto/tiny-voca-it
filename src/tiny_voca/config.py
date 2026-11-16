@@ -49,11 +49,14 @@ class Config:
     energy_mean: float = -4.0
     energy_scale: float = 2.0
     pitch_reference_hz: float = 200.0
+    # Language profile (tiny_voca.languages). "en" is the legacy contract and is
+    # left out of to_dict(), so English configs and fingerprints are unchanged.
+    language: str = "en"
 
     def __post_init__(self):
-        from .text import SYMBOLS
-        if self.vocab_size != len(SYMBOLS):
-            raise ValueError(f"vocab_size must equal the phoneme inventory size {len(SYMBOLS)}")
+        symbols = self.profile.symbols
+        if self.vocab_size != len(symbols):
+            raise ValueError(f"vocab_size must equal the {self.language!r} phoneme inventory size {len(symbols)}")
         if self.channels % self.heads or (self.channels // self.heads) % 2:
             raise ValueError("channels must be divisible by heads with an even head width")
         if not self.speakers or len(set(self.speakers)) != len(self.speakers):
@@ -68,12 +71,26 @@ class Config:
         if min(self.mel_scale, self.energy_scale) <= 0 or not 0 < self.harmonic_limit < 0.5:
             raise ValueError("invalid normalization scale or harmonic limit")
 
+    @property
+    def profile(self):
+        from .languages import profile_for
+        return profile_for(self.language)
+
     def to_dict(self):
-        return asdict(self)
+        value = asdict(self)
+        if value["language"] == "en":
+            del value["language"]
+        return value
 
     @classmethod
     def from_dict(cls, value):
         return cls(**{**value, "speakers": tuple(value["speakers"])})
+
+    @classmethod
+    def for_language(cls, language, speakers, **overrides):
+        """Default architecture with a language's vocabulary and the given voices."""
+        from .languages import profile_for
+        return cls(language=language, speakers=tuple(speakers), vocab_size=len(profile_for(language).symbols), **overrides)
 
     @property
     def fingerprint(self):

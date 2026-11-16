@@ -26,14 +26,13 @@ import time
 import numpy as np
 import torch
 
-from .align import ALIGNER_MODEL, AlignmentSettings, PhoneRecognizer, align_utterance
+from .align import ALIGNER_MODEL, CLOSURE_DROP_DB, ONSET_OFFSET, AlignmentSettings, PhoneRecognizer, align_utterance
 from .config import ANNOTATION_VERSION, Config
 from .journal import append, atomic_json, file_hash, recover
-from .text import (PHONE_SET, SYMBOL_TO_ID, UNK, VOICELESS, VOWEL_SET, Phonemized, frontend_fingerprint,
-                   frontend_identity, frontend_runtime, phonemize)
+from .languages import ENGLISH, UNK
+from .text import Phonemized, frontend_fingerprint, frontend_runtime, phonemize
 
 SPLITS = ("train", "validation", "test")
-FRICATIVES = frozenset(("f", "θ", "s", "ʃ"))
 
 
 def load_acoustic_rows(features, split, config):
@@ -55,10 +54,10 @@ def text_key(text):
     return hashlib.sha256(text.strip().encode()).hexdigest()
 
 
-def phonemize_texts(rows, cache, workers=16, log=print):
+def phonemize_texts(rows, cache, workers=16, log=print, profile=ENGLISH):
     known = {}
     for record in recover(cache):
-        known[record["text_hash"]] = Phonemized(tuple(record["symbols"]), tuple(SYMBOL_TO_ID[s] for s in record["symbols"]),
+        known[record["text_hash"]] = Phonemized(tuple(record["symbols"]), tuple(profile.symbol_to_id[s] for s in record["symbols"]),
                                                 tuple(record["stress"]), tuple(record["unknown"]))
     todo = {}
     for row in rows:
@@ -69,17 +68,18 @@ def phonemize_texts(rows, cache, workers=16, log=print):
     if todo:
         log(f"phonemizing {len(todo)} distinct texts")
         with cache.open("a", encoding="utf-8") as stream, concurrent.futures.ThreadPoolExecutor(workers) as pool:
-            for key, result in zip(todo, pool.map(phonemize, todo.values())):
+            for key, result in zip(todo, pool.map(lambda text: phonemize(text, profile), todo.values())):
                 known[key] = result
                 append(stream, {"text_hash": key, "symbols": list(result.symbols), "stress": list(result.stress),
                                 "unknown": list(result.unknown)}, sync=False)
     return known
 
 
-def boundary_offsets(symbols, durations, voiced, reach=6):
+def boundary_offsets(symbols, durations, voiced, reach=6, profile=ENGLISH):
     """Label-free timing probe. At vowel -> voiceless-consonant and voiceless
     fricative -> vowel boundaries the pitch tracker's voicing must flip; return
     the signed distance (frames) from the aligned boundary to the nearest flip."""
+    VOWEL_SET, VOICELESS, FRICATIVES = profile.vowel_set, profile.voiceless, profile.fricatives
     found = {"vowel_to_voiceless": [], "fricative_to_vowel": []}
     ends = np.cumsum(durations)
     active = [i for i, d in enumerate(durations) if d > 0]
@@ -151,6 +151,10 @@ def main():
     parser.add_argument("--refine-band", type=int, default=4)
     parser.add_argument("--stage", default="ctc", help="Durations used for the final manifests: ctc or refined-<n>")
     parser.add_argument("--min-pause-frames", type=int, default=AlignmentSettings.min_pause_frames)
+    parser.add_argument("--closure-drop-db", type=float, help="Closure-aware stop boundaries: dB below the vowel median "
+                        "(default: the language's value in align.CLOSURE_DROP_DB; 0 turns it off)")
+    parser.add_argument("--onset-offset", type=float, help="Phone onset relative to its first emission frame, seconds "
+                        "(default: the language's calibrated value in align.ONSET_OFFSET)")
     parser.add_argument("--max-weak-phone-fraction", type=float, default=0.25)
     parser.add_argument("--min-token-probability", type=float, default=0.5)
     parser.add_argument("--max-phone-frames", type=int, default=70)
@@ -159,7 +163,10 @@ def main():
     parser.add_argument("--max-phones-per-second", type=float, default=30.0)
     args = parser.parse_args()
     config = Config.from_dict(json.loads(args.config.read_text())) if args.config else Config()
-    settings = AlignmentSettings(min_pause_frames=args.min_pause_frames)
+    profile = config.profile
+    onset = ONSET_OFFSET[profile.language] if args.onset_offset is None else args.onset_offset
+    closure = CLOSURE_DROP_DB[profile.language] if args.closure_drop_db is None else (args.closure_drop_db or None)
+    settings = AlignmentSettings(min_pause_frames=args.min_pause_frames, onset_offset_seconds=onset, closure_drop_db=closure)
     limits = {key: getattr(args, key) for key in ("max_weak_phone_fraction", "min_token_probability", "max_phone_frames",
                                                     "min_vowel_voiced", "min_phones_per_second", "max_phones_per_second")}
     started = time.time()
@@ -170,11 +177,11 @@ def main():
     rows = {split: load_acoustic_rows(args.features, split, config) for split in args.splits}
     if args.limit:
         rows = {split: value[:args.limit] for split, value in rows.items()}
-    recognizer = PhoneRecognizer(args.device)
+    recognizer = PhoneRecognizer(args.device, profile=profile)
     identity = {
-        "annotation_version": ANNOTATION_VERSION, "acoustic": config.acoustic_fingerprint, "frontend": frontend_fingerprint(),
-        **frontend_runtime(), "aligner": {"model": ALIGNER_MODEL, "revision": recognizer.revision},
-        "alignment": settings.to_dict(), "dataset_revision": args.dataset_revision, "limit": args.limit,
+        "annotation_version": ANNOTATION_VERSION, "acoustic": config.acoustic_fingerprint, "frontend": frontend_fingerprint(profile),
+        **frontend_runtime(profile), "aligner": {"model": ALIGNER_MODEL, "revision": recognizer.revision},
+        "alignment": settings.to_dict(profile), "dataset_revision": args.dataset_revision, "limit": args.limit,
         "sources": {split: file_hash(args.features / (split + ".jsonl")) for split in args.splits},
     }
     fingerprint = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
@@ -189,7 +196,7 @@ def main():
     (args.output / "raw").mkdir(exist_ok=True)
 
     every = [row for split in args.splits for row in rows[split]]
-    phonemes = phonemize_texts(every, args.output / "phonemes.jsonl", log=log)
+    phonemes = phonemize_texts(every, args.output / "phonemes.jsonl", log=log, profile=profile)
     hashes = {split: {row["text_hash"] for row in rows[split]} for split in args.splits}
     for i, a in enumerate(args.splits):
         for b in args.splits[i + 1:]:
@@ -268,7 +275,7 @@ def main():
                     continue
                 if row["id"] not in voicing:
                     voicing[row["id"]] = torch.load(args.features / row["path"], map_location="cpu", weights_only=True)["prosody"][:, 1].numpy() > 0.5
-                found = boundary_offsets(phonemes[row["text_hash"]].symbols, stage[split][row["id"]], voicing[row["id"]])
+                found = boundary_offsets(phonemes[row["text_hash"]].symbols, stage[split][row["id"]], voicing[row["id"]], profile=profile)
                 for kind, values in found.items():
                     collected[row["speaker"]][kind].extend(values)
         probe[name] = {voice: summarize_offsets(collected[voice]) for voice in config.speakers}
@@ -292,7 +299,7 @@ def main():
                      "path": row["path"], "frames": row["frames"], "symbols": " ".join(result.symbols), "tokens": list(result.ids),
                      "stress": list(result.stress), "durations": durations, "unknown": list(result.unknown), "qc": record["qc"],
                      "provenance": {**row.get("provenance", {}), "dataset_revision": args.dataset_revision},
-                     "acoustic": config.acoustic_fingerprint, "frontend": frontend_fingerprint(), "annotation": fingerprint}
+                     "acoustic": config.acoustic_fingerprint, "frontend": frontend_fingerprint(profile), "annotation": fingerprint}
             if sum(durations) != row["frames"] or len(durations) != len(result.ids):
                 raise RuntimeError(f"durations of {row['id']} do not match its frames/tokens")
             reasons = gate(entry, limits)
@@ -301,7 +308,7 @@ def main():
                 continue
             accepted.append(entry)
             for symbol, frames in zip(result.symbols, durations):
-                if symbol in PHONE_SET or symbol == UNK:
+                if symbol in profile.phone_set or symbol == UNK:
                     phone_frames[row["speaker"]][symbol].append(frames)
                 else:
                     pause_tokens[symbol] += 1

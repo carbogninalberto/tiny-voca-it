@@ -33,13 +33,14 @@ from dataclasses import dataclass
 import math
 import numpy as np
 
-from .text import PHONE_SET, PUNCTUATION, SP, UNK, VOICELESS, VOWEL_SET
+from .languages import ENGLISH, PUNCTUATION, SP, UNK
 
 ALIGNER_MODEL = "facebook/wav2vec2-lv-60-espeak-cv-ft"
 ALIGNER_RATE = 16000
 ALIGNER_STRIDE = 320          # samples at 16 kHz: 20 ms
 ALIGNER_CENTER = 200          # a frame's centre: 12.5 ms after its start
-ALIGNMENT_VERSION = 2
+ALIGNMENT_VERSION = 2          # English contract; other languages record their own version below
+LANGUAGE_ALIGNMENT_VERSION = 3  # adds the profile's token -> recogniser label mapping
 PAUSING = (",", ".", "?", "!", ";", ":", "—", "…")
 # Every inventory phone is a label of the recogniser (checked when it loads);
 # only the unknown-phone token needs a stand-in.
@@ -54,9 +55,51 @@ class AlignmentSettings:
     silence_above_floor_db: float = 8.0
     silence_ceiling_below_peak_db: float = 30.0
     energy_window: int = 512
+    # Closure-aware stop boundaries (None = off, the English contract). The
+    # recogniser marks a stop at its release, so its silent closure lands in the
+    # preceding vowel; frames at the vowel's end that are this many dB below the
+    # vowel's median level are given to the stop/affricate instead.
+    closure_drop_db: float | None = None
+    closure_min_vowel_frames: int = 2
 
-    def to_dict(self):
-        return {"alignment_version": ALIGNMENT_VERSION, "aligner": ALIGNER_MODEL, **self.__dict__}
+    def to_dict(self, profile=None):
+        if profile is None or profile.language == "en":
+            values = {k: v for k, v in self.__dict__.items() if not k.startswith("closure_")}
+            if self.closure_drop_db is not None:
+                values.update(closure_drop_db=self.closure_drop_db, closure_min_vowel_frames=self.closure_min_vowel_frames)
+            return {"alignment_version": ALIGNMENT_VERSION, "aligner": ALIGNER_MODEL, **values}
+        return {"alignment_version": LANGUAGE_ALIGNMENT_VERSION, "aligner": ALIGNER_MODEL, "language": profile.language,
+                "label_map": dict(sorted(profile.aligner_labels.items())), **self.__dict__}
+
+
+# Onset calibration measured per language (scripts/calibrate_aligner_timing.py).
+# English: -19 ms on the tiny-voca recordings. Italian: measured on the Italian
+# pilot before full annotation; until then the English value is a provisional default.
+ONSET_OFFSET = {"en": -0.019, "it": -0.019}
+# Closure shift per language (None = off). Italian: measured on 861 clips, it turns
+# voiceless geminate stops from no longer than singletons (tː 4.0 vs t 4.2 frames)
+# into 1.6-1.9x longer (tː 7.6 vs t 4.6), the expected Italian ratio.
+CLOSURE_DROP_DB = {"en": None, "it": 12.0}
+
+
+def closure_shift(symbols, durations, level_db, closure_set, vowel_set, drop_db, min_vowel=2):
+    """Move each stop/affricate's start back over the low-energy tail of the
+    vowel before it. Only vowel -> closure boundaries move; totals are unchanged."""
+    durations = np.array(durations, dtype=np.int64)
+    ends = np.cumsum(durations)
+    for i in range(1, len(symbols)):
+        if symbols[i] not in closure_set or symbols[i - 1] not in vowel_set or durations[i - 1] <= min_vowel:
+            continue
+        start, end = int(ends[i - 1] - durations[i - 1]), int(ends[i - 1])
+        reference = float(np.median(level_db[start:end]))
+        cut = end
+        while cut - 1 >= start + min_vowel and level_db[cut - 1] < reference - drop_db:
+            cut -= 1
+        if cut < end:
+            durations[i - 1] -= end - cut
+            durations[i] += end - cut
+            ends = np.cumsum(durations)
+    return durations
 
 
 def ctc_viterbi(log_probs, labels, blank=0):
@@ -155,13 +198,14 @@ def pause_carrier(symbols, group):
     return group[0]
 
 
-def assemble(symbols, spans, frames, silent, hop, sample_rate, settings):
+def assemble(symbols, spans, frames, silent, hop, sample_rate, settings, profile=ENGLISH):
     """Durations in acoustic frames for every token (sums to ``frames``).
 
     Acoustic frame i is centred on sample ``i * hop`` (the convention of the
     stored mel/pitch features and of the synthesis frames).
     """
-    phones = [i for i, s in enumerate(symbols) if s in PHONE_SET or s == UNK]
+    phone_set = profile.phone_set
+    phones = [i for i, s in enumerate(symbols) if s in phone_set or s == UNK]
     count = len(phones)
     if count != len(spans) or count < 1:
         raise ValueError("phoneme count differs from alignment")
@@ -209,8 +253,9 @@ def assemble(symbols, spans, frames, silent, hop, sample_rate, settings):
     return durations
 
 
-def quality(symbols, durations, spans, log_probs, labels, voiced, level_db, hop, sample_rate):
+def quality(symbols, durations, spans, log_probs, labels, voiced, level_db, hop, sample_rate, profile=ENGLISH):
     """Label-free checks of one alignment against the recording itself."""
+    PHONE_SET, VOWEL_SET, VOICELESS = profile.phone_set, profile.vowel_set, profile.voiceless
     durations = np.asarray(durations)
     ends = np.cumsum(durations)
     starts = ends - durations
@@ -250,7 +295,7 @@ def quality(symbols, durations, spans, log_probs, labels, voiced, level_db, hop,
 class PhoneRecognizer:
     """The pretrained annotation model. Loaded from the local HF cache only."""
 
-    def __init__(self, device="cuda", name=ALIGNER_MODEL, local_files_only=True):
+    def __init__(self, device="cuda", name=ALIGNER_MODEL, local_files_only=True, profile=ENGLISH):
         import json
         from pathlib import Path
         import torch
@@ -265,11 +310,13 @@ class PhoneRecognizer:
         self.blank = int(self.model.config.pad_token_id)
         self.name = name
         self.revision = vocabulary.parent.name   # snapshot directory = commit hash
-        missing = [p for p in sorted(PHONE_SET) if p not in self.vocabulary and p not in ALIGNER_LABEL_FALLBACK]
+        self.profile = profile
+        missing = [p for p in sorted(profile.phone_set) if profile.aligner_label(p) not in self.vocabulary and p not in ALIGNER_LABEL_FALLBACK]
         if missing:
             raise ValueError(f"recogniser has no label for inventory phones {missing}")
 
     def label(self, symbol):
+        symbol = self.profile.aligner_label(symbol)
         symbol = symbol if symbol in self.vocabulary else ALIGNER_LABEL_FALLBACK[symbol]
         return int(self.vocabulary[symbol])
 
@@ -286,6 +333,8 @@ class PhoneRecognizer:
 
 def align_utterance(recognizer, phonemized, wave, voiced, config, settings):
     """Return ``(durations, qc)`` for one recording or raise ``ValueError``."""
+    profile = config.profile
+    PHONE_SET = profile.phone_set
     symbols = phonemized.symbols
     frames = len(wave) // config.hop
     if len(wave) != frames * config.hop or len(voiced) != frames:
@@ -295,7 +344,12 @@ def align_utterance(recognizer, phonemized, wave, voiced, config, settings):
     spans = token_spans(log_probs, labels, recognizer.blank)
     level = frame_energy_db(wave, config.hop, settings.energy_window)
     silent, threshold = silence_mask(level, settings)
-    durations = assemble(symbols, spans, frames, silent, config.hop, config.sample_rate, settings)
-    qc = quality(symbols, durations, spans, log_probs, labels, np.asarray(voiced) > 0.5, level, config.hop, config.sample_rate)
+    durations = assemble(symbols, spans, frames, silent, config.hop, config.sample_rate, settings, profile)
+    if settings.closure_drop_db is not None:
+        durations = closure_shift(symbols, durations, level, profile.closure_consonants, profile.vowel_set,
+                                  settings.closure_drop_db, settings.closure_min_vowel_frames)
+        if durations.sum() != frames or np.any(durations[[i for i, s in enumerate(symbols) if s in PHONE_SET or s == UNK]] < 1):
+            raise ValueError("closure shift broke the duration contract")
+    qc = quality(symbols, durations, spans, log_probs, labels, np.asarray(voiced) > 0.5, level, config.hop, config.sample_rate, profile)
     qc["silence_threshold_db"] = round(threshold, 1)
     return durations.tolist(), qc

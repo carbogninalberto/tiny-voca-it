@@ -1,7 +1,6 @@
 # Italian training and custom voice plan
 
-Status: planning only. No Italian implementation, dataset download, GPU benchmark,
-training run, or voice adaptation has been completed.
+Status: implemented and trained; see the gates below and [docs/italian.md](../docs/italian.md).
 
 Baseline: `28e0722c6ad040d74a1f6e63d77621272477a71f`.
 Working branch: `train-on-it-dataset`.
@@ -52,19 +51,16 @@ Do not select a voice based only on its advertised number of hours.
 
 ## Completion gates
 
-- [ ] G0: dataset rights/access checked; representative audio and transcripts audited.
-- [ ] G1: Italian profile and phonemization work; English artifacts retain their meaning.
-- [ ] G2: reproducible manifests have no duplicate leakage and pass acoustic checks.
-- [ ] G3: Italian alignments pass vocabulary, duration, and manual boundary audits.
-- [ ] G4: a small subset can be learned; representative GAN training fits the GPU.
-- [ ] G5: Italian baseline passes held-out intelligibility and listening evaluation.
-- [ ] G6: custom-voice adaptation improves resemblance without unacceptable regressions.
-- [ ] G7: inference/export metadata and ONNX parity pass; browser remains deferred unless tested.
+Status 2026-11-16; evidence and commands in [docs/italian.md](../docs/italian.md).
 
-All gates are pending. Dataset quality, actual GPU throughput, Italian alignment
-quality, and the achievable timbre fidelity remain open questions. Fifteen to
-thirty minutes of target speech is an exploratory trial; one to three hours is a
-planning target, not an established requirement for this architecture.
+- [~] G0: Mozilla voice not accessible (sign-in); CML-TTS Italian (CC BY 4.0) used, speaker 1595 chosen by objective audit. Human listening audit pending.
+- [x] G1: Italian profile/eSpeak front end, no English fallback, profile digest in checkpoints; English fingerprints unchanged (tests).
+- [x] G2: deterministic, order-independent splits by book section with duplicate grouping; test manifest digest locked in the receipt.
+- [~] G3: 2.1% rejection, timing probe recorded; voiceless geminates fixed by closure-aware boundaries; sonorant geminate durations still not encoded.
+- [x] G4: pilot, GAN ramp and a 100k-step run on the RTX 5070 Ti (4.7 GB / 9.7–10.3 GB peak); resume and adaptation smoke-tested.
+- [~] G5: test WER 7.1% vs 9.1% on recordings (ASR gate passes); native listening pending.
+- [~] G6: adaptation implemented and tested; demonstrated on a stand-in CML-TTS voice (acoustic beats embedding-only). Real consented speaker pending.
+- [ ] G7: export metadata is profile-derived; Italian ONNX parity not yet run; browser deferred.
 
 ## Scope of this change
 

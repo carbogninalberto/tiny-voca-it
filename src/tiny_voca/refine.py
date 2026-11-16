@@ -13,30 +13,36 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from .text import PHONES, PHONE_SET
+from .languages import ENGLISH
 
+# English class layout (kept for existing callers); other languages derive theirs from the profile.
+PHONES = ENGLISH.phones
 SILENCE_CLASS = len(PHONES)
 OTHER_CLASS = len(PHONES) + 1
 CLASSES = len(PHONES) + 2
-_PHONE_CLASS = {phone: index for index, phone in enumerate(PHONES)}
 
 
-def symbol_class(symbol):
-    if symbol in PHONE_SET:
-        return _PHONE_CLASS[symbol]
-    return OTHER_CLASS if symbol == "<unk>" else SILENCE_CLASS
+def class_count(profile=ENGLISH):
+    return len(profile.phones) + 2
+
+
+def symbol_class(symbol, profile=ENGLISH):
+    phones = profile.phones
+    if symbol in profile.phone_set:
+        return phones.index(symbol)
+    return len(phones) + 1 if symbol == "<unk>" else len(phones)
 
 
 class FrameClassifier(nn.Module):
     """Receptive field of 11 acoustic frames: it labels what a frame sounds
     like, with too little context to learn a systematic timing offset."""
 
-    def __init__(self, n_mels, speakers, channels=256):
+    def __init__(self, n_mels, speakers, channels=256, classes=CLASSES):
         super().__init__()
         self.speaker = nn.Embedding(speakers, channels)
         self.input = nn.Conv1d(n_mels, channels, 5, padding=2)
         self.blocks = nn.ModuleList(nn.Conv1d(channels, channels, 3, padding=1) for _ in range(3))
-        self.output = nn.Conv1d(channels, CLASSES, 1)
+        self.output = nn.Conv1d(channels, classes, 1)
 
     def forward(self, mel, speaker):
         x = self.input(mel.transpose(1, 2)) + self.speaker(speaker).transpose(1, 2)
@@ -45,8 +51,8 @@ class FrameClassifier(nn.Module):
         return self.output(F.gelu(x)).transpose(1, 2)
 
 
-def frame_labels(symbols, durations):
-    return np.repeat([symbol_class(s) for s in symbols], durations)
+def frame_labels(symbols, durations, profile=ENGLISH):
+    return np.repeat([symbol_class(s, profile) for s in symbols], durations)
 
 
 def banded_viterbi(scores, starts, ends, band):
@@ -86,6 +92,8 @@ def refine(items, config, device="cuda", iterations=2, band=4, steps=3000, batch
 
     Returns one list of per-utterance duration lists per iteration.
     """
+    profile = config.profile
+    classes = class_count(profile)
     generator = torch.Generator().manual_seed(seed)
     torch.manual_seed(seed)
     # Two-fold cross-fitting by sentence: a recording is re-timed only by a
@@ -106,11 +114,11 @@ def refine(items, config, device="cuda", iterations=2, band=4, steps=3000, batch
     current = [d.copy() for d in reference]
     results = []
     for iteration in range(iterations):
-        labels = torch.from_numpy(np.concatenate([frame_labels(item["symbols"], d) for item, d in zip(items, current)])).to(device)
+        labels = torch.from_numpy(np.concatenate([frame_labels(item["symbols"], d, profile) for item, d in zip(items, current)])).to(device)
         refined, moved, agree = [None] * len(items), [], []
         for held_out in (0, 1):
             low_train, high_train = (split, int(offsets[-1])) if held_out == 0 else (0, split)
-            model = FrameClassifier(config.n_mels, len(config.speakers)).to(device)
+            model = FrameClassifier(config.n_mels, len(config.speakers), classes=classes).to(device)
             optimizer = torch.optim.AdamW(model.parameters(), lr=2e-3, weight_decay=1e-2)
             schedule = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=2e-3, total_steps=steps)
             model.train()
@@ -125,7 +133,7 @@ def refine(items, config, device="cuda", iterations=2, band=4, steps=3000, batch
                 if step % 1000 == 0 or step == steps - 1:
                     log(f"refine iteration={iteration + 1} held_out_fold={held_out} step={step + 1} loss={loss.item():.4f}")
             model.eval()
-            prior = torch.bincount(labels[low_train:high_train], minlength=CLASSES).float().clamp_min(1)
+            prior = torch.bincount(labels[low_train:high_train], minlength=classes).float().clamp_min(1)
             prior = (prior / prior.sum()).log()
             with torch.inference_mode():
                 for number in np.flatnonzero(fold == held_out):
@@ -136,9 +144,9 @@ def refine(items, config, device="cuda", iterations=2, band=4, steps=3000, batch
                     scores = (logits.log_softmax(-1) - prior_scale * prior).cpu().numpy().astype(np.float64)
                     active = np.flatnonzero(original > 0)
                     ends = np.cumsum(original)[active]
-                    classes = [symbol_class(item["symbols"][i]) for i in active]
+                    states = [symbol_class(item["symbols"][i], profile) for i in active]
                     durations = np.zeros_like(original)
-                    durations[active] = banded_viterbi(scores[:, classes], ends - original[active], ends, band)
+                    durations[active] = banded_viterbi(scores[:, states], ends - original[active], ends, band)
                     refined[number] = durations
                     moved.append(np.abs(np.cumsum(durations)[active][:-1] - np.cumsum(now)[active][:-1]))
         shift = np.concatenate(moved) if moved else np.zeros(1)

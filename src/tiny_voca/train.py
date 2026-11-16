@@ -18,9 +18,21 @@ from torch import nn
 from torch.nn import functional as F
 from .config import CHECKPOINT_FORMAT, Config
 from .data import AnnotatedDataset, BucketSampler, collate
+from .journal import file_hash
 from .losses import Discriminators, SpectralLoss, discriminator_loss, generator_gan_loss, masked_mean
 from .model import TinyVoca
 from .text import frontend_fingerprint, frontend_identity
+
+# Custom-voice adaptation: which parts of the network a mode trains. Everything
+# else is frozen (requires_grad False AND left out of the optimizer, so AdamW
+# decay/momentum cannot move it either).
+ADAPT_MODES = {
+    "embedding": ("model.voices.", "model.frame_voices."),
+    "acoustic": ("model.voices.", "model.frame_voices.", "model.duration.", "model.frame_position.", "model.prosody_stack.",
+                 "model.prosody_head.", "model.prosody_projection.", "model.acoustic_stack.", "model.vocoder.", "mel_head."),
+    "full": ("",),
+}
+SPEAKER_TABLES = ("model.voices.weight", "model.frame_voices.weight")
 
 WEIGHTS = {"duration": 1.0, "pause": 1.0, "pitch": 2.0, "pitch_spread": 2.0, "voicing": 1.0, "energy": 1.0, "mel_head": 2.0,
            "stft": 2.0, "mel": 10.0}
@@ -124,7 +136,7 @@ def teacher_probability(step, hold, ramp, final):
     return 1.0 if step < hold else max(final, 1.0 - (1.0 - final) * (step - hold) / max(ramp, 1))
 
 
-def optimize_step(system, critics, optimizer, critic_optimizer, batch, step, recipe):
+def optimize_step(system, critics, optimizer, critic_optimizer, batch, step, recipe, parameters=None):
     weights = recipe["weights"]
     start = (recipe.get("branched_from") or {}).get("step", 0)
     for group in optimizer.param_groups:
@@ -164,7 +176,7 @@ def optimize_step(system, critics, optimizer, critic_optimizer, batch, step, rec
             critics.requires_grad_(True)
     else:
         loss.backward()
-    grad = nn.utils.clip_grad_norm_(system.parameters(), recipe["grad_clip"], error_if_nonfinite=True)
+    grad = nn.utils.clip_grad_norm_(system.parameters() if parameters is None else parameters, recipe["grad_clip"], error_if_nonfinite=True)
     optimizer.step()
     return {**{k: float(v.detach()) for k, v in metrics.items()}, "loss": float(loss.detach()), "grad_norm": float(grad),
             "frames": int(batch["frame_lengths"].sum()), "utterances": len(batch["frame_lengths"])}
@@ -177,10 +189,76 @@ def atomic_save(value, path):
     os.replace(temporary, path)
 
 
-def export_model(model, path, step, annotation=None):
-    atomic_save({"format_version": CHECKPOINT_FORMAT, "config": model.config.to_dict(), "step": step,
-                 "frontend": {**frontend_identity(), "fingerprint": frontend_fingerprint()}, "annotation": annotation,
-                 "model": {k: v.detach().cpu() for k, v in model.state_dict().items()}}, path)
+def export_model(model, path, step, annotation=None, provenance=None):
+    profile = model.config.profile
+    state = {"format_version": CHECKPOINT_FORMAT, "config": model.config.to_dict(), "step": step,
+             "frontend": {**frontend_identity(profile), "fingerprint": frontend_fingerprint(profile)}, "annotation": annotation,
+             "model": {k: v.detach().cpu() for k, v in model.state_dict().items()}}
+    if profile.language != "en":
+        state["language"] = {"language": profile.language, "locale": profile.locale, "profile_version": profile.version,
+                             "profile_digest": profile.digest}
+    if provenance:
+        state["provenance"] = provenance
+    atomic_save(state, path)
+
+
+def adaptation_init(system, source, init_voice):
+    """Initialise a NEW custom-voice run from a trained Italian (or any) checkpoint.
+
+    ``source`` is a training snapshot (``last.pt``: has ``system``) or an
+    inference checkpoint (``inference.pt``: has ``model``). Every non-speaker
+    tensor must exist with the same shape and is copied exactly. Both speaker
+    tables are migrated BY NAME: a target voice that exists in the source keeps
+    its row; a new one starts from the row of ``init_voice``. Returns a report
+    of copied / initialised / fresh tensors; anything else is an error.
+    """
+    source_config = source["config"]
+    target = system.model.config
+    weights = source["system"] if "system" in source else {"model." + k: v for k, v in source["model"].items()}
+    current = system.state_dict()
+    report = {"copied": [], "speaker_rows": {}, "fresh": [], "rejected": []}
+    source_speakers = list(source_config["speakers"])
+    if init_voice not in source_speakers:
+        raise ValueError(f"--init-voice {init_voice!r} is not a voice of the source checkpoint {source_speakers}")
+    for name, tensor in current.items():
+        if name in SPEAKER_TABLES:
+            if name not in weights or weights[name].shape[1:] != tensor.shape[1:]:
+                report["rejected"].append(name)
+                continue
+            rows = tensor.clone()
+            for index, voice in enumerate(target.speakers):
+                origin = voice if voice in source_speakers else init_voice
+                rows[index] = weights[name][source_speakers.index(origin)]
+                report["speaker_rows"].setdefault(voice, origin)
+            current[name] = rows
+        elif name in weights:
+            if weights[name].shape != tensor.shape:
+                report["rejected"].append(name)
+            else:
+                current[name] = weights[name]
+                report["copied"].append(name)
+        elif name.startswith("mel_head."):
+            report["fresh"].append(name)          # inference checkpoints carry no auxiliary head
+        else:
+            report["rejected"].append(name)
+    extra = sorted(set(weights) - set(current))
+    if report["rejected"] or extra:
+        raise ValueError(f"cannot adapt: tensors differ (missing/shape: {report['rejected']}, unexpected: {extra[:10]})")
+    system.load_state_dict(current)
+    report["copied"] = len(report["copied"])
+    return report
+
+
+def adaptation_parameters(system, mode):
+    """Freeze everything outside the mode; return the trainable parameters."""
+    prefixes = ADAPT_MODES[mode]
+    trainable = []
+    for name, parameter in system.named_parameters():
+        keep = any(name.startswith(prefix) for prefix in prefixes)
+        parameter.requires_grad_(keep)
+        if keep:
+            trainable.append(parameter)
+    return trainable
 
 
 def load_compatible(module, state):
@@ -237,7 +315,21 @@ def check_leakage(train, validation):
 
 
 @torch.no_grad()
-def validate(system, dataset, indices, device, weights=WEIGHTS, batch_size=8):
+def validation_batches(order, lengths, batch_size, frame_budget=None):
+    """Consecutive batches of the length-sorted ``order`` with at most
+    ``batch_size`` utterances and, if given, ``frame_budget`` padded frames."""
+    batches, current = [], []
+    for index in order:
+        if current and (len(current) == batch_size or (frame_budget and (len(current) + 1) * lengths[index] > frame_budget)):
+            batches.append(current)
+            current = []
+        current.append(index)
+    if current:
+        batches.append(current)
+    return batches
+
+
+def validate(system, dataset, indices, device, weights=WEIGHTS, batch_size=8, frame_budget=None):
     """Held-out metrics on a fixed balanced subset.
 
     ``teacher_forced`` conditions the decoder on recorded prosody, ``predicted``
@@ -249,8 +341,8 @@ def validate(system, dataset, indices, device, weights=WEIGHTS, batch_size=8):
     system.eval()
     order = sorted(indices, key=lambda i: dataset.lengths[i])
     totals, weight = defaultdict(float), 0
-    for start in range(0, len(order), batch_size):
-        batch = collate([dataset[i] for i in order[start:start + batch_size]], device)
+    for chosen in validation_batches(order, dataset.lengths, batch_size, frame_budget):
+        batch = collate([dataset[i] for i in chosen], device)
         size = len(batch["frame_lengths"])
         for name, probability in (("teacher_forced", 1.0), ("predicted", 0.0)):
             _, metrics, _ = system.objective(batch, probability, weights, random_phase=False)
@@ -308,6 +400,13 @@ def main():
     parser.add_argument("--recorded-voicing", action="store_true", help="Use the pitch tracker's voicing as it is, "
                         "without marking vowel frames voiced")
     parser.add_argument("--no-preload", action="store_true", help="Load feature files lazily instead of before the first step")
+    parser.add_argument("--validation-frames", type=int, help="Padded-frame budget per validation batch (default: --batch-frames)")
+    parser.add_argument("--adapt-from", type=Path, help="Start a NEW custom-voice run from a trained checkpoint (last.pt or "
+                        "inference.pt): speaker tables migrated by name, fresh optimizer, critics and step counter")
+    parser.add_argument("--adapt-mode", choices=sorted(ADAPT_MODES), default="acoustic",
+                        help="embedding: only the voice rows; acoustic: voice rows + frame/prosody/acoustic/synthesis "
+                        "(text encoder frozen); full: everything")
+    parser.add_argument("--init-voice", help="Source voice whose rows initialise target voices that are new")
     args = parser.parse_args()
     if min(args.steps, args.batch_frames, args.max_batch, args.save_every, args.keep_every, args.log_every, args.crops, args.gan_ramp) < 1:
         parser.error("steps, batch limits and intervals must be positive")
@@ -317,6 +416,8 @@ def main():
         parser.error(f"--weights may only override {sorted(WEIGHTS)}; GAN settings must be non-negative")
     if args.resume and args.init_from:
         parser.error("--init-from starts a new run; --resume continues one")
+    if args.adapt_from and (args.init_from or args.resume):
+        parser.error("--adapt-from starts a new adaptation run; resume it with --resume alone")
 
     # The budget file is re-read while training so a deliberate extension (or cut) takes effect.
     budget = {"deadline": math.inf, "checked": time.time()}
@@ -346,6 +447,7 @@ def main():
         raise FileExistsError("output directory is not empty; use --resume or a new directory")
     pool = balanced_indices(train, args.subset) if args.subset else list(range(len(train)))
     validation_indices = balanced_indices(validation, args.validation_size)
+    validation_frames = args.validation_frames or args.batch_frames
     if not args.no_preload:
         train.preload(pool)
         validation.preload(validation_indices)
@@ -353,7 +455,34 @@ def main():
     count = sum(p.numel() for p in system.model.parameters())
     if count > 5_000_000:
         raise ValueError(f"inference parameter budget exceeded: {count:,}")
-    optimizer = torch.optim.AdamW(system.parameters(), lr=args.learning_rate, betas=(0.8, 0.99), weight_decay=0.01)
+    adaptation = None
+    trainable = list(system.parameters())
+    if args.adapt_from:
+        source = torch.load(args.adapt_from, map_location="cpu", weights_only=True)
+        if source.get("format_version") != CHECKPOINT_FORMAT:
+            raise ValueError("adaptation source is not a format-4 checkpoint")
+        source_config = Config.from_dict(source["config"])
+        mismatch = {k: (v, getattr(c, k)) for k, v in source_config.to_dict().items() if k != "speakers" and getattr(c, k) != v}
+        if source_config.language != c.language:
+            mismatch["language"] = (source_config.language, c.language)
+        if mismatch:
+            raise ValueError(f"adaptation needs the same language profile, DSP and architecture; differs: {mismatch}")
+        source_frontend = source["frontend"]["fingerprint"] if isinstance(source["frontend"], dict) else source["frontend"]
+        if source_frontend != frontend_fingerprint(c.profile):
+            raise ValueError("adaptation source was trained with a different front end / language profile")
+        adaptation = {"source": str(args.adapt_from), "source_sha256": file_hash(args.adapt_from),
+                      "source_step": source["step"], "source_speakers": list(source_config.speakers), "mode": args.adapt_mode,
+                      "init_voice": args.init_voice or source_config.speakers[0]}
+        adaptation["tensors"] = adaptation_init(system, source, adaptation["init_voice"])
+        del source
+    if args.resume:
+        peek = torch.load(args.resume, map_location="cpu", weights_only=True)["recipe"]
+        adaptation = peek.get("adaptation")
+        del peek
+    if adaptation is not None:
+        trainable = adaptation_parameters(system, adaptation["mode"])
+        adaptation["trainable_parameters"] = sum(p.numel() for p in trainable)
+    optimizer = torch.optim.AdamW(trainable, lr=args.learning_rate, betas=(0.8, 0.99), weight_decay=0.01)
     critic_optimizer = torch.optim.AdamW(critics.parameters(), lr=args.learning_rate, betas=(0.8, 0.99), weight_decay=0.0)
     sampler = BucketSampler([train.lengths[i] for i in pool], args.batch_frames, args.max_batch, args.seed)
     fingerprints = [train.fingerprint, validation.fingerprint]
@@ -364,12 +493,14 @@ def main():
     recipe["voiced_vowel_targets"] = not args.recorded_voicing
     recipe["weights"] = {**WEIGHTS, **{key: float(value) for key, value in args.weights.items()}}
     recipe["branched_from"] = None
+    recipe["adaptation"] = adaptation
+    recipe["validation_frames"] = validation_frames
     step = 0
 
     def compatible(state, what, same_data=True):
         if state.get("format_version") != CHECKPOINT_FORMAT:
             raise ValueError(f"checkpoint predates phoneme tokens and supervised durations (format < 4); it cannot be {what}")
-        if same_data and (state["frontend"] != frontend_fingerprint() or state["annotation"] != train.annotation):
+        if same_data and (state["frontend"] != frontend_fingerprint(c.profile) or state["annotation"] != train.annotation):
             raise ValueError("checkpoint was trained with a different front end or annotation run "
                              "(branch with --init-from and --new-data to fine-tune on new annotations)")
         if state["config"] != c.to_dict():
@@ -413,7 +544,7 @@ def main():
         raise ValueError("checkpoint already reached requested total steps")
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "config.json").write_text(json.dumps(c.to_dict(), indent=2) + "\n")
-    (args.output / "recipe.json").write_text(json.dumps({**recipe, "annotation": train.annotation, "frontend": frontend_fingerprint(),
+    (args.output / "recipe.json").write_text(json.dumps({**recipe, "annotation": train.annotation, "frontend": frontend_fingerprint(c.profile),
                                                          "train_utterances": len(pool), "datasets": fingerprints}, indent=2) + "\n")
     print(json.dumps({"inference_parameters": count, "training_only_parameters": sum(p.numel() for p in system.mel_head.parameters())
                       + sum(p.numel() for p in critics.parameters()), "train_utterances": len(pool), "start_step": step,
@@ -422,7 +553,7 @@ def main():
     system.train()
 
     def snapshot():
-        return {"format_version": CHECKPOINT_FORMAT, "config": c.to_dict(), "frontend": frontend_fingerprint(), "annotation": train.annotation,
+        return {"format_version": CHECKPOINT_FORMAT, "config": c.to_dict(), "frontend": frontend_fingerprint(c.profile), "annotation": train.annotation,
                 "step": step, "datasets": fingerprints, "recipe": recipe, "system": system.state_dict(), "critics": critics.state_dict(),
                 "optimizer": optimizer.state_dict(), "critic_optimizer": critic_optimizer.state_dict(), "sampler": sampler.state(),
                 "torch_rng": torch.get_rng_state(), "cuda_rng": torch.cuda.get_rng_state_all() if str(args.device).startswith("cuda") else None}
@@ -431,7 +562,7 @@ def main():
     window, window_steps, window_start = defaultdict(float), 0, time.monotonic()
     while step < args.steps:
         batch = collate([train[pool[i]] for i in sampler.next()], args.device)
-        metrics = optimize_step(system, critics, optimizer, critic_optimizer, batch, step, recipe)
+        metrics = optimize_step(system, critics, optimizer, critic_optimizer, batch, step, recipe, trainable)
         step += 1
         for key, value in metrics.items():
             window[key] += value
@@ -449,11 +580,17 @@ def main():
             record.update(step=step, elapsed_seconds=elapsed, steps_per_second=window_steps / max(seconds, 1e-9),
                           audio_seconds_per_second=window["frames"] * c.hop / c.sample_rate / max(seconds, 1e-9),
                           learning_rate=optimizer.param_groups[0]["lr"])
+            if str(args.device).startswith("cuda"):
+                record.update(peak_allocated_gb=round(torch.cuda.max_memory_allocated() / 2**30, 3),
+                              peak_reserved_gb=round(torch.cuda.max_memory_reserved() / 2**30, 3))
             if save:
-                record.update(validate(system, validation, validation_indices, args.device, recipe["weights"]))
+                validation_start = time.monotonic()
+                record.update(validate(system, validation, validation_indices, args.device, recipe["weights"], frame_budget=validation_frames))
+                record["validation_seconds"] = round(time.monotonic() - validation_start, 2)
                 state = snapshot()
                 atomic_save(state, args.output / "last.pt")
-                export_model(system.model, args.output / "inference.pt", step, train.annotation)
+                provenance = {"adapted_from": {k: v for k, v in adaptation.items() if k != "tensors"}} if adaptation else None
+                export_model(system.model, args.output / "inference.pt", step, train.annotation, provenance)
                 if retain:
                     atomic_save(state, args.output / f"step-{step:08d}.pt")
             with (args.output / "metrics.jsonl").open("a") as stream:

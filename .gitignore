@@ -14,3 +14,10 @@ ops/
 web/public/assets/
 web/.wrangler/
 node_modules/
+# Italian pipeline: real audio, features, annotations, evaluations and reports stay local.
+eval/
+*.parquet
+*.webm
+*.tsv
+*.mp3
+logs/

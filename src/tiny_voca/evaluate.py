@@ -40,10 +40,52 @@ NOVEL_SENTENCES = (
     "Could you send me the report by Friday afternoon, please?",
     "She sells seashells by the seashore, and the shells she sells are surely seashells.",
 )
+# Authored Italian development challenges: (category, sentence). Not in any split
+# (checked at run time). Selection uses validation; these are for listening/ASR.
+ITALIAN_CHALLENGES = (
+    ("geminates", "La palla è caduta sulla pala del giardiniere."),
+    ("geminates", "Mi fa pena vedere quella penna rotta sul tavolo."),
+    ("geminates", "Il nonno ha detto di no, e poi di nuovo no."),
+    ("geminates", "Nella cassa c'era una casa di bambole."),
+    ("homophones", "Quest'anno hanno deciso di partire presto."),
+    ("gn_gl", "Ho mangiato gli gnocchi con mio figlio e sua moglie."),
+    ("gn_gl", "Il bagno è in fondo al corridoio, accanto alla sala degli specchi."),
+    ("stress", "Perché la città è così silenziosa stasera?"),
+    ("stress", "Lui parlò a lungo, poi andò via senza salutare."),
+    ("open_vowels", "Il bello della festa è stato il caffè con le pesche."),
+    ("affricates", "La ragazza ha ordinato una pizza e un succo di zucca."),
+    ("affricates", "Ci vediamo giovedì alle cinque davanti al cinema."),
+    ("numbers", "Il treno parte alle 12:30 dal binario 7."),
+    ("numbers", "Pi greco vale circa 3,14 e il conto è di € 25,50."),
+    ("numbers", "Nel 1997 c'erano 250 persone alla riunione."),
+    ("dates", "Ci siamo sposati il 14 febbraio 2015 a Venezia."),
+    ("names", "Giuseppe e Francesca sono andati a Firenze con Alessandro."),
+    ("names", "La signora Bianchi abita in via Garibaldi, a Napoli."),
+    ("elision", "L'amico di un'altra persona mi ha dato un po' d'acqua."),
+    ("questions", "Hai già prenotato il ristorante per domani sera?"),
+    ("questions", "Dove sono le chiavi della macchina?"),
+    ("long", "Quando finalmente arrivammo in cima alla montagna, il sole stava tramontando e l'aria era fresca e limpida."),
+    ("long", "Se avessi saputo che saresti venuto anche tu, avrei preparato qualcosa di speciale per la cena."),
+    ("everyday", "Buongiorno, vorrei un cappuccino e un cornetto, per favore."),
+    ("everyday", "Domani piove, quindi è meglio portare l'ombrello."),
+)
 SEMITONES = 12 / np.log(2)
+ITALIAN_NORMALIZER_VERSION = "it-norm-1"
 
 
-def normalizer():
+def italian_normalizer(text):
+    """it-norm-1: NFKC, lower case, typographic apostrophes, apostrophes and
+    punctuation to spaces, accents removed (ASR writes è/e' inconsistently),
+    whitespace collapsed. Digits stay digits; raw transcripts are kept."""
+    import unicodedata
+    text = unicodedata.normalize("NFKC", text).lower().replace("’", "'")
+    text = "".join(c for c in unicodedata.normalize("NFD", text) if not unicodedata.combining(c))
+    return re.sub(r"\s+", " ", re.sub(r"[^\w]+", " ", text)).strip()
+
+
+def normalizer(language="en"):
+    if language == "it":
+        return italian_normalizer
     try:
         from transformers.models.whisper.english_normalizer import EnglishTextNormalizer
         return EnglishTextNormalizer({})
@@ -88,9 +130,9 @@ def main():
     parser.add_argument("--splits", nargs="+", default=["train", "validation", "test"])
     parser.add_argument("--train-subset", type=int, help="Restrict 'train' examples to the first N balanced rows (the --subset used in training)")
     parser.add_argument("--per-voice", type=int, default=4)
-    parser.add_argument("--novel", type=int, default=len(NOVEL_SENTENCES))
+    parser.add_argument("--novel", type=int, default=100, help="How many authored sentences (English novel set / Italian challenges)")
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--asr-model", default="small.en")
+    parser.add_argument("--asr-model", help="faster-whisper model (default: small.en for English, small otherwise)")
     parser.add_argument("--no-asr", action="store_true")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--speed", type=float, default=1.0)
@@ -100,6 +142,12 @@ def main():
     from .train import balanced_indices
     model = load_model(args.checkpoint, args.device)
     c = model.config
+    profile = c.profile
+    language = profile.default_asr_language
+    asr_model = args.asr_model or ("small.en" if language == "en" else "small")
+    if language != "en" and asr_model.endswith(".en"):
+        parser.error(f"{asr_model} is an English-only ASR model; {language!r} needs a multilingual one")
+    novel_sentences = [("novel", t) for t in NOVEL_SENTENCES] if language == "en" else list(ITALIAN_CHALLENGES)
     checkpoint_step = torch.load(args.checkpoint, map_location="cpu", weights_only=True)["step"]
     spectral = SpectralLoss(c.sample_rate)
     audio_dir = args.output / "audio"
@@ -119,10 +167,11 @@ def main():
         for voice in c.speakers:
             chosen = spread([i for i in candidates if dataset.rows[i]["speaker"] == voice], dataset.lengths, args.per_voice)
             jobs += [{"group": split, "voice": voice, "index": i, "id": dataset.rows[i]["id"], "text": dataset.rows[i]["text"]} for i in chosen]
-    for number, text in enumerate(NOVEL_SENTENCES[:args.novel]):
+    for number, (category, text) in enumerate(novel_sentences[:args.novel]):
         if hashlib.sha256(text.strip().encode()).hexdigest() in known_texts:
             raise ValueError("a 'novel' sentence is part of the dataset")
-        jobs += [{"group": "novel", "voice": voice, "index": None, "id": f"novel{number:02d}_{voice}", "text": text} for voice in c.speakers]
+        jobs += [{"group": "novel", "category": category, "voice": voice, "index": None, "id": f"novel{number:02d}_{voice}", "text": text}
+                 for voice in c.speakers]
 
     samples = []
     for job in jobs:
@@ -133,7 +182,7 @@ def main():
         sf.write(generated_path, samples_out, c.sample_rate, subtype="PCM_16")
         prediction = details["prosody"][0].float().cpu()
         voiced = prediction[:, 1] > 0
-        record = {**{k: job[k] for k in ("group", "voice", "id", "text")}, "phonemes": " ".join(phones.symbols),
+        record = {**{k: job[k] for k in ("group", "voice", "id", "text") }, "category": job.get("category"), "phonemes": " ".join(phones.symbols),
                   "generated": generated_path.name, "generated_seconds": round(len(wave) / c.sample_rate, 3),
                   "peak": round(float(np.abs(wave).max()), 4), "rms": round(float(np.sqrt(np.mean(wave ** 2))), 4),
                   "attenuated_db": attenuation,
@@ -169,15 +218,16 @@ def main():
     if not args.no_asr:
         import jiwer
         from faster_whisper import WhisperModel
-        asr = WhisperModel(args.asr_model, device="cpu", compute_type="int8", cpu_threads=8)
-        normalize = normalizer()
+        cuda = str(args.device).startswith("cuda")
+        asr = WhisperModel(asr_model, device="cuda" if cuda else "cpu", compute_type="float16" if cuda else "int8", cpu_threads=8)
+        normalize = normalizer(language)
 
         def transcribe(path):
             from scipy.signal import resample_poly
             audio, rate = sf.read(path, dtype="float32")
             factor = int(np.gcd(rate, 16000))      # the ASR model expects 16 kHz samples
             audio = resample_poly(audio, 16000 // factor, rate // factor).astype(np.float32)
-            segments, _ = asr.transcribe(audio, language="en", beam_size=5, condition_on_previous_text=False, temperature=0.0)
+            segments, _ = asr.transcribe(audio, language=language, beam_size=5, condition_on_previous_text=False, temperature=0.0)
             return " ".join(segment.text.strip() for segment in segments).strip()
         for record in samples:
             truth = normalize(record["text"])
@@ -185,7 +235,12 @@ def main():
                 if kind in record:
                     hypothesis = transcribe(audio_dir / record[kind])
                     record[kind + "_transcript"] = hypothesis
-                    record[kind + "_wer"] = round(float(jiwer.wer(truth, normalize(hypothesis) or "<empty>")), 4)
+                    hypothesis = normalize(hypothesis) or "<empty>"
+                    measures = jiwer.process_words(truth, hypothesis)
+                    record[kind + "_wer"] = round(float(measures.wer), 4)
+                    record[kind + "_word_errors"] = measures.substitutions + measures.deletions + measures.insertions
+                    record[kind + "_words"] = len(truth.split())
+                    record[kind + "_cer"] = round(float(jiwer.cer(truth, hypothesis)), 4)
             print(json.dumps({"transcribed": record["id"], "generated_wer": record.get("generated_wer"), "reference_wer": record.get("reference_wer")}), flush=True)
 
     def mean(group, voice, key):
@@ -197,11 +252,24 @@ def main():
         for label, voices in (("all", c.speakers), *((v, (v,)) for v in c.speakers)):
             summary[group][label] = {"samples": sum(s["group"] == group and s["voice"] in voices for s in samples),
                                      **{key: mean(group, voices, key) for key in
-                                        ("generated_wer", "reference_wer", "duration_ratio", "pause_ratio", "mel_dtw", "generated_pitch_std_semitones",
+                                        ("generated_wer", "reference_wer", "generated_cer", "reference_cer", "duration_ratio", "pause_ratio", "mel_dtw", "generated_pitch_std_semitones",
                                          "reference_pitch_std_semitones", "generated_voiced_fraction", "reference_voiced_fraction")}}
+        # Corpus-level (pooled) WER: total word errors / total reference words.
+        for kind in ("generated", "reference"):
+            chosen = [s for s in samples if s["group"] == group and kind + "_words" in s]
+            if chosen:
+                summary[group]["all"][kind + "_pooled_wer"] = round(sum(s[kind + "_word_errors"] for s in chosen)
+                                                                    / max(1, sum(s[kind + "_words"] for s in chosen)), 4)
+    categories = sorted({s["category"] for s in samples if s.get("category")})
+    if categories:
+        summary["novel_by_category"] = {k: {"samples": sum(s.get("category") == k for s in samples),
+                                            "generated_wer": round(float(np.mean([s["generated_wer"] for s in samples if s.get("category") == k
+                                                                                  and "generated_wer" in s] or [np.nan])), 4)}
+                                        for k in categories}
     mismatched = [s["id"] for s in samples if s.get("tokens_match_annotation") is False]
     report = {"tag": args.tag, "checkpoint": str(args.checkpoint), "step": checkpoint_step,
-              "inference_parameters": sum(p.numel() for p in model.parameters()), "asr_model": None if args.no_asr else "faster-whisper " + args.asr_model,
+              "inference_parameters": sum(p.numel() for p in model.parameters()), "asr_model": None if args.no_asr else "faster-whisper " + asr_model, "asr_language": language,
+              "normalizer": ITALIAN_NORMALIZER_VERSION if language == "it" else "whisper-english",
               "note": "generated audio is free-running: text in, predicted durations/pitch/voicing/energy",
               "settings": {"speed": args.speed, "pitch_range": args.pitch_range, "seed": args.seed},
               "frontend_token_mismatches": mismatched, "summary": summary, "samples": samples}

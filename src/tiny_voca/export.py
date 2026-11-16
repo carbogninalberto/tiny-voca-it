@@ -33,7 +33,7 @@ from torch import nn
 import torch.nn.functional as F
 
 from .infer import load_model, match_frontend
-from .text import SYMBOLS, frontend_fingerprint, frontend_identity
+from .text import frontend_fingerprint, frontend_identity
 
 INPUTS = ("tokens", "stress", "voice", "speed", "pitch_shift", "pitch_range")
 OUTPUTS = ("audio", "durations")
@@ -201,15 +201,15 @@ class Exportable(nn.Module):
         return self._vocoder(acoustic, f0, total, noise), durations
 
 
-def example_inputs(length=24):
-    tokens = torch.randint(5, len(SYMBOLS), (1, length))
+def example_inputs(length=24, vocab_size=76):
+    tokens = torch.randint(5, vocab_size, (1, length))
     one = lambda value: torch.tensor([value], dtype=torch.float32)
     return tokens, torch.zeros_like(tokens), torch.tensor([0]), one(1.0), one(0.0), one(1.0)
 
 
 def export(model, path, external_noise=False, opset=17):
     wrapper = Exportable(model, external_noise).eval()
-    inputs = example_inputs()
+    inputs = example_inputs(vocab_size=model.config.vocab_size)
     names = list(INPUTS)
     axes = {"tokens": {1: "tokens"}, "stress": {1: "tokens"}, "audio": {1: "samples"}, "durations": {1: "tokens"}}
     if external_noise:
@@ -225,10 +225,15 @@ def export(model, path, external_noise=False, opset=17):
 def metadata(model, checkpoint):
     c = model.config
     state = torch.load(checkpoint, map_location="cpu", weights_only=True)
-    return {"sample_rate": c.sample_rate, "hop": c.hop, "voices": list(c.speakers), "symbols": list(SYMBOLS),
-            "max_tokens": c.max_tokens, "max_frames": c.max_frames, "step": state.get("step"),
-            "frontend": frontend_identity().get("phonemizer", "espeak"), "frontend_fingerprint": frontend_fingerprint(),
-            "inputs": list(INPUTS), "outputs": list(OUTPUTS)}
+    profile = c.profile
+    value = {"sample_rate": c.sample_rate, "hop": c.hop, "voices": list(c.speakers), "symbols": list(profile.symbols),
+             "max_tokens": c.max_tokens, "max_frames": c.max_frames, "step": state.get("step"),
+             "frontend": frontend_identity(profile).get("phonemizer", "espeak"), "frontend_fingerprint": frontend_fingerprint(profile),
+             "inputs": list(INPUTS), "outputs": list(OUTPUTS)}
+    if profile.language != "en":
+        value.update(language=profile.language, locale=profile.locale, profile_version=profile.version,
+                     profile_digest=profile.digest, espeak_voice=profile.espeak_voice)
+    return value
 
 
 def main():

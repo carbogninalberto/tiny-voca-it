@@ -21,7 +21,6 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from .config import Config
-from .text import PHONE_IDS, SYMBOL_TO_ID, VOWELS
 
 
 def length_mask(lengths, size=None):
@@ -254,11 +253,14 @@ class TinyVoca(nn.Module):
         self.prosody_projection = nn.Linear(3, c.channels)
         self.acoustic_stack = Stack(c, c.acoustic_layers)
         self.vocoder = SourceFilter(c)
+        # Token classes come from this model's own language profile, never from
+        # process-wide state: models of different languages can coexist.
+        profile = c.profile
         phones = torch.zeros(c.vocab_size, dtype=torch.bool)
-        phones[sorted(PHONE_IDS)] = True
+        phones[sorted(profile.phone_ids)] = True
         self.register_buffer("phone_tokens", phones, persistent=False)
         vowels = torch.zeros(c.vocab_size, dtype=torch.bool)
-        vowels[[SYMBOL_TO_ID[v] for v in VOWELS]] = True
+        vowels[sorted(profile.vowel_ids)] = True
         self.register_buffer("vowel_tokens", vowels, persistent=False)
 
     def encode(self, tokens, stress, lengths, speakers):

@@ -20,9 +20,10 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     state = torch.load(args.checkpoint, map_location="cpu", weights_only=True)
-    if state.get("format_version") != CHECKPOINT_FORMAT or state["frontend"] != frontend_fingerprint():
+    config = Config.from_dict(state["config"])
+    if state.get("format_version") != CHECKPOINT_FORMAT or state["frontend"] != frontend_fingerprint(config.profile):
         raise ValueError("checkpoint format or front end does not match this code")
-    model = TinyVoca(Config.from_dict(state["config"]))
+    model = TinyVoca(config)
     model.load_state_dict({k.removeprefix("model."): v for k, v in state["system"].items() if k.startswith("model.")}, strict=True)
     export_model(model, args.output, state["step"], state["annotation"])
     print(f"exported step {state['step']} with {sum(p.numel() for p in model.parameters()):,} parameters to {args.output}")

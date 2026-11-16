@@ -66,6 +66,31 @@ def extract(wave, config):
             "prosody": torch.from_numpy(prosody.astype(np.float32))}
 
 
+def _extract_job(audio, entry, c, target):
+    """Read, check and featurize one recording; write its feature file.
+    Returns the manifest entry, or the exception that rejects the row."""
+    try:
+        wave, sr = sf.read(io.BytesIO(audio) if isinstance(audio, (bytes, bytearray)) else audio, dtype="float32")
+        if sr != c.sample_rate:
+            raise ValueError(f"expected {c.sample_rate} Hz; got {sr}. Resample explicitly before preparation")
+        frames = math.ceil(len(wave)/c.hop)
+        if not MIN_FRAMES <= frames <= c.max_frames:
+            raise ValueError("audio duration outside admission limits")
+        torch.set_num_threads(1)
+        sample = extract(wave, c)
+        sample.update(speaker=c.speakers.index(entry["speaker"]))
+        target = Path(target)
+        temporary = target.with_name(target.name+".tmp")
+        with temporary.open("wb") as stream:
+            torch.save(sample, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, target)
+        return {**entry, "frames":frames}
+    except Exception as error:
+        return error
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--inputs", nargs="+", type=Path, required=True)
@@ -75,6 +100,7 @@ def main():
     parser.add_argument("--config", type=Path)
     parser.add_argument("--split", choices=("train", "validation", "test"), required=True)
     parser.add_argument("--resume", action="store_true", help="Skip durably accepted/rejected records from these same inputs")
+    parser.add_argument("--workers", type=int, default=1, help="Processes for decoding and pitch tracking (pyin dominates)")
     args = parser.parse_args()
     c = Config.from_dict(json.loads(args.config.read_text())) if args.config else Config()
     args.output.mkdir(parents=True, exist_ok=True)
@@ -114,63 +140,77 @@ def prepare_split(args, c):
         if not (args.output/entry["path"]).is_file():
             raise ValueError(f"committed feature file is missing: {entry['path']}")
     accepted_count, rejected_count = len(entries), len(rejected)
+    workers = max(1, getattr(args, "workers", 1))
     with manifest.open("a", encoding="utf-8") as accepted_stream, rejects.open("a", encoding="utf-8") as rejected_stream:
-        for source_index, source in enumerate(args.inputs):
-            for index, row in enumerate(records(source)):
-                record_key = f"{source_index}:{index}"
-                if record_key in done:
-                    continue
-                identifier = None
-                try:
-                    if not isinstance(row, dict):
-                        raise ValueError("row must be an object")
-                    if "_input_error" in row:
-                        raise ValueError(row["_input_error"])
-                    identifier = row.get("id")
-                    if not isinstance(identifier, str) or not identifier:
-                        raise ValueError("row must have a stable nonempty string id")
-                    if identifier in seen:
-                        raise ValueError("duplicate id")
-                    if row.get("split", args.split) != args.split:
-                        raise ValueError("row split differs from --split")
-                    text, speaker = row[args.text_column], row[args.speaker_column]
-                    if not isinstance(text, str) or not text.strip():
-                        raise ValueError("text must be a nonempty string")
-                    if speaker not in c.speakers:
-                        raise ValueError(f"unknown speaker {speaker!r}; expected {c.speakers}")
-                    provenance = json_safe({k:row[k] for k in ("text_id", "origin", "source_id", "source_license", "source_url", "teacher_model", "reference_audio") if k in row})
-                    audio = row["audio"]
-                    if isinstance(audio, dict):
-                        audio = io.BytesIO(audio["bytes"]) if audio.get("bytes") is not None else source.parent / audio["path"]
-                    else:
-                        audio = source.parent / audio
-                    wave, sr = sf.read(audio, dtype="float32")
-                    if sr != c.sample_rate:
-                        raise ValueError(f"expected {c.sample_rate} Hz; got {sr}. Resample explicitly before preparation")
-                    frames = math.ceil(len(wave)/c.hop)
-                    if not MIN_FRAMES <= frames <= c.max_frames:
-                        raise ValueError("audio duration outside admission limits")
-                    name = hashlib.sha256(identifier.encode()).hexdigest()+".pt"
-                    entry = {"record_key":record_key, "id":identifier, "path":f"{args.split}/{name}", "acoustic":c.acoustic_fingerprint,
-                             "text_hash":hashlib.sha256(text.strip().encode()).hexdigest(), "text":text,
-                             "speaker":speaker, "source_file":str(source), "frames":frames, "provenance":provenance}
-                    json.dumps(entry, ensure_ascii=False, allow_nan=False)  # Validate before expensive DSP.
-                    sample = extract(wave, c)
-                    sample.update(speaker=c.speakers.index(speaker))
-                    temporary = feature_dir/(name+".tmp")
-                    with temporary.open("wb") as stream:
-                        torch.save(sample, stream)
-                        stream.flush()
-                        os.fsync(stream.fileno())
-                    os.replace(temporary, feature_dir/name)
-                except Exception as error:
-                    append(rejected_stream, {"record_key":record_key, "id":str(identifier), "source":str(source), "reason":f"{type(error).__name__}: {error}"})
-                    rejected_count += 1
-                else:
-                    # Journal write failures must abort, not masquerade as bad source rows.
-                    append(accepted_stream, entry)
+        def finish(record_key, source, identifier, outcome):
+            nonlocal accepted_count, rejected_count
+            if isinstance(outcome, Exception):
+                seen.discard(identifier)
+                append(rejected_stream, {"record_key":record_key, "id":str(identifier), "source":str(source), "reason":f"{type(outcome).__name__}: {outcome}"})
+                rejected_count += 1
+            else:
+                # Journal write failures must abort, not masquerade as bad source rows.
+                append(accepted_stream, outcome)
+                accepted_count += 1
+
+        def admitted():
+            """Cheap checks in order (duplicate ids are decided here, deterministically)."""
+            for source_index, source in enumerate(args.inputs):
+                for index, row in enumerate(records(source)):
+                    record_key = f"{source_index}:{index}"
+                    if record_key in done:
+                        continue
+                    identifier = None
+                    try:
+                        if not isinstance(row, dict):
+                            raise ValueError("row must be an object")
+                        if "_input_error" in row:
+                            raise ValueError(row["_input_error"])
+                        identifier = row.get("id")
+                        if not isinstance(identifier, str) or not identifier:
+                            raise ValueError("row must have a stable nonempty string id")
+                        if identifier in seen:
+                            raise ValueError("duplicate id")
+                        if row.get("split", args.split) != args.split:
+                            raise ValueError("row split differs from --split")
+                        text, speaker = row[args.text_column], row[args.speaker_column]
+                        if not isinstance(text, str) or not text.strip():
+                            raise ValueError("text must be a nonempty string")
+                        if speaker not in c.speakers:
+                            raise ValueError(f"unknown speaker {speaker!r}; expected {c.speakers}")
+                        provenance = json_safe({k:row[k] for k in ("text_id", "origin", "source_id", "source_license", "source_url", "teacher_model", "reference_audio") if k in row})
+                        audio = row["audio"]
+                        if isinstance(audio, dict):
+                            audio = audio["bytes"] if audio.get("bytes") is not None else str(source.parent / audio["path"])
+                        else:
+                            audio = str(source.parent / audio)
+                        name = hashlib.sha256(identifier.encode()).hexdigest()+".pt"
+                        entry = {"record_key":record_key, "id":identifier, "path":f"{args.split}/{name}", "acoustic":c.acoustic_fingerprint,
+                                 "text_hash":hashlib.sha256(text.strip().encode()).hexdigest(), "text":text,
+                                 "speaker":speaker, "source_file":str(source), "frames":None, "provenance":provenance}
+                        json.dumps(entry, ensure_ascii=False, allow_nan=False)  # Validate before expensive DSP.
+                    except Exception as error:
+                        finish(record_key, source, identifier, error)
+                        continue
                     seen.add(identifier)
-                    accepted_count += 1
+                    yield record_key, source, identifier, (audio, entry, c, str(feature_dir/name))
+
+        if workers == 1:
+            for record_key, source, identifier, job in admitted():
+                outcome = _extract_job(*job)
+                finish(record_key, source, identifier, outcome)
+        else:
+            import concurrent.futures
+            with concurrent.futures.ProcessPoolExecutor(workers) as pool:
+                pending = {}
+                for record_key, source, identifier, job in admitted():
+                    pending[pool.submit(_extract_job, *job)] = (record_key, source, identifier)
+                    if len(pending) >= 4 * workers:
+                        finished, _ = concurrent.futures.wait(pending, return_when=concurrent.futures.FIRST_COMPLETED)
+                        for future in finished:
+                            finish(*pending.pop(future), future.result())
+                for future in concurrent.futures.as_completed(list(pending)):
+                    finish(*pending.pop(future), future.result())
     atomic_json(metadata_path, {"identity":identity, "complete":True, "accepted":accepted_count, "rejected":rejected_count})
     print(json.dumps({"accepted":accepted_count, "rejected":rejected_count, "manifest":str(manifest)}))
     if not accepted_count:
