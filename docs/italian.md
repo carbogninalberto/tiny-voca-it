@@ -299,3 +299,24 @@ firewall rule (elevated PowerShell):
 netsh interface portproxy add v4tov4 listenaddress=0.0.0.0 listenport=8765 connectaddress=<WSL IP> connectport=8765
 New-NetFirewallRule -DisplayName "tiny-voca playground" -Direction Inbound -Protocol TCP -LocalPort 8765 -Action Allow -Profile Private,Domain
 ```
+
+## Browser playground (GitHub Pages)
+
+`bash scripts/build_pages.sh` builds `build/pages`: `playground/web` (page, module
+worker, `frontend.js`), both models as ONNX (21.4 MB each) and eSpeak NG compiled to
+WebAssembly (npm `espeak-ng` 1.0.2, eSpeak NG 1.52-dev, GPL-3.0, integrity-checked and
+served unmodified with its licence and source pointers). It is published on the
+`gh-pages` branch. ONNX Runtime Web 1.20.1 runs single-threaded (Pages sends no
+cross-origin isolation headers).
+
+Checks:
+
+- ONNX vs PyTorch (`scripts/check_onnx.py`, both voices, 5 sentences up to 196 tokens):
+  identical durations and lengths, waveform error ≤ 0.01; 93× real time on 4 CPU threads.
+- `frontend.js` vs Python on 5,594 texts (corpus + challenges + edge cases):
+  - replaying the exact eSpeak 1.51 output: **0 mismatches** (the port is exact);
+  - with the browser's eSpeak 1.52 WebAssembly: 98.8% identical tokens; 68 texts differ,
+    almost all `avesse` (`sː e` in 1.52, `sː i` in 1.51; 1.52 is right), 1 stress-only.
+  The model was trained on 1.51 tokens; the drift is small and mostly a correction.
+- Headless Chromium end to end: both voices speak, phonemes equal Python's for the
+  test sentences, 9–12× real time in a single wasm thread, no console errors.
