@@ -231,8 +231,11 @@ def metadata(model, checkpoint):
              "frontend": frontend_identity(profile).get("phonemizer", "espeak"), "frontend_fingerprint": frontend_fingerprint(profile),
              "inputs": list(INPUTS), "outputs": list(OUTPUTS)}
     if profile.language != "en":
+        # The full front-end rules (inventory, eSpeak canonicalisation, geminates, abbreviations),
+        # so a non-Python front end can reproduce the tokens from the same table.
         value.update(language=profile.language, locale=profile.locale, profile_version=profile.version,
-                     profile_digest=profile.digest, espeak_voice=profile.espeak_voice)
+                     profile_digest=profile.digest, espeak_voice=profile.espeak_voice,
+                     frontend_identity=frontend_identity(profile))
     return value
 
 

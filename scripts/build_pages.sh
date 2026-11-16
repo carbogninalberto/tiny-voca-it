@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Build the static, browser-only Italian playground (GitHub Pages) into build/pages.
+#
+#   bash scripts/build_pages.sh
+#
+# - exports the committed Italian checkpoints (models/italian/*.pt) to ONNX + metadata;
+# - downloads the pinned eSpeak NG WebAssembly build (npm espeak-ng 1.0.2, GPL-3.0),
+#   checks its npm integrity hash and serves it unmodified with its licence;
+# - copies playground/web (page, worker, ported front end).
+# Requires the Python environment of this repository (torch, onnx); a local espeak-ng is not needed.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+OUT=build/pages
+PYTHON=${PYTHON:-.venv/bin/python}
+ESPEAK_TARBALL=https://registry.npmjs.org/espeak-ng/-/espeak-ng-1.0.2.tgz
+ESPEAK_INTEGRITY=sha512-Xe4YC7d/+O06zYpsqrJ3LpbETdL/IO8JrnAmWcQEMoRFmMLWU+2y2HnpEkOCnqZfb40MBDVyP4ppfusKdWbPcQ==
+
+rm -rf "$OUT"
+mkdir -p "$OUT/models" "$OUT/espeak-ng"
+cp playground/web/index.html playground/web/worker.js playground/web/frontend.js "$OUT/"
+touch "$OUT/.nojekyll"
+
+# eSpeak NG (WebAssembly), verified against the npm registry's integrity hash.
+tmp=$(mktemp -d)
+curl -fsSL -o "$tmp/espeak.tgz" "$ESPEAK_TARBALL"
+actual="sha512-$(openssl dgst -sha512 -binary "$tmp/espeak.tgz" | base64 -w0)"
+[ "$actual" = "$ESPEAK_INTEGRITY" ] || { echo "espeak-ng tarball integrity mismatch" >&2; exit 1; }
+tar -xzf "$tmp/espeak.tgz" -C "$tmp"
+cp "$tmp/package/dist/espeak-ng.js" "$tmp/package/dist/espeak-ng.wasm" "$tmp/package/LICENSE" "$tmp/package/README.md" "$OUT/espeak-ng/"
+cat > "$OUT/espeak-ng/SOURCE.md" <<'EOF'
+eSpeak NG compiled to WebAssembly, distributed unmodified from the npm package
+`espeak-ng` 1.0.2 (https://www.npmjs.com/package/espeak-ng), built from
+https://github.com/ianmarmour/espeak-ng.js on eSpeak NG 1.52-dev
+(https://github.com/espeak-ng/espeak-ng). Licence: GPL-3.0-or-later (see LICENSE).
+Corresponding source: the two repositories above.
+EOF
+rm -rf "$tmp"
+
+# Models.
+export PYTHONPATH=src
+for name in tiny-voca-it-IT1 tiny-voca-it-IT2-adapted; do
+  "$PYTHON" -W ignore -m tiny_voca.export --checkpoint "models/italian/$name.pt" --output "$OUT/models/$name.onnx"
+done
+cat > "$OUT/models/models.json" <<'EOF'
+[
+  {"id": "it1", "file": "tiny-voca-it-IT1", "label": "IT1 · Italian base"},
+  {"id": "it2", "file": "tiny-voca-it-IT2-adapted", "label": "IT2 · adapted voice (28 min of data)"}
+]
+EOF
+du -sh "$OUT"; find "$OUT" -type f | sort

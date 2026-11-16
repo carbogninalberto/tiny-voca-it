@@ -24,3 +24,4 @@ logs/
 
 # Released Italian checkpoints are versioned on purpose.
 !models/**/*.pt
+build/
