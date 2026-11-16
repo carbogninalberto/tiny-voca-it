@@ -21,3 +21,6 @@ eval/
 *.tsv
 *.mp3
 logs/
+
+# Released Italian checkpoints are versioned on purpose.
+!models/**/*.pt
