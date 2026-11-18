@@ -18,10 +18,10 @@ if ! grep -q '"complete": true' logs/ef3-gen.log 2>/dev/null; then
   # (benchmark: 1.6x real time at batch 8, 3.1x at 16, 3.3x at 24), and parallel processes only time-slice
   # the GPU. So: one process, a large batch, Whisper screening on idle CPU cores overlapped with generation.
   # Fallback on failure (e.g. out of GPU memory): a smaller batch; the run resumes where it stopped.
-  for B in 20 14 8; do
+  for B in 18 12 8; do
     PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$LIB/qwenlib .venv/bin/python scripts/generate_voice.py \
       --root data/ef3-synth --voice-id EF3 --reference data/emotion-synth/audio/emo-EF3-neutral-0.0-3e06518d08.wav \
-      --hours 6 --batch $B --whisper-device cuda >> logs/ef3-gen.log 2>&1 && break
+      --hours 6 --batch $B --whisper-device cuda --memory-fraction 0.8 >> logs/ef3-gen.log 2>&1 && break
     log "EF3 generation failed at batch $B"
   done
   PYTHONPATH=$LIB/qwenlib .venv/bin/python scripts/generate_voice.py --root data/ef3-synth --voice-id EF3 \

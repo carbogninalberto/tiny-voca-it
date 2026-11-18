@@ -743,6 +743,11 @@ From now on decisions are made and recorded here, without waiting for approval.
     next batch.
   - Whisper on CPU int8 was slower than generation and stalled it.
   - Result: 26 clips/min (about 2.2× real time), up from 4–12. Target 6 h.
+  - **GPU memory.** With `expandable_segments` the process grew to 15.7 of 16 GB and
+    spilled into shared memory; the rate fell to about 14 clips/min and the watchdog
+    alerted.
+  - **Fix:** cap the process at 80% of GPU memory (`--memory-fraction 0.8`) and use
+    batch 18. It now runs stable at 12.4 GB and about 21 clips/min.
 - **EF3 splits:**
   - **Leakage fixed.** Sentences that are training sentences of another voice stay in
     train (`check_leakage` would have aborted the fine-tune).
