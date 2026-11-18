@@ -66,9 +66,23 @@ def extract(wave, config):
             "prosody": torch.from_numpy(prosody.astype(np.float32))}
 
 
-def _extract_job(audio, entry, c, target):
+def reusable(stored, wave, c):
+    """Features of an earlier preparation, if they were computed from exactly
+    these samples (same padded waveform, consistent shapes), else ``None``."""
+    frames = math.ceil(len(wave)/c.hop)
+    padded = torch.from_numpy(np.pad(wave, (0, frames*c.hop-len(wave))).astype(np.float32))
+    if stored["wave"].shape != padded.shape or not torch.equal(stored["wave"], padded):
+        return None
+    if stored["mel"].shape != (frames, c.n_mels) or stored["prosody"].shape != (frames, 3):
+        return None
+    return {"wave": stored["wave"], "mel": stored["mel"], "prosody": stored["prosody"]}
+
+
+def _extract_job(audio, entry, c, target, reuse=None):
     """Read, check and featurize one recording; write its feature file.
-    Returns the manifest entry, or the exception that rejects the row."""
+    ``reuse`` is an earlier feature file of the same id with the same acoustic
+    settings; it is used only when its stored waveform equals this audio.
+    Returns ``(entry, reused)``, or the exception that rejects the row."""
     try:
         wave, sr = sf.read(io.BytesIO(audio) if isinstance(audio, (bytes, bytearray)) else audio, dtype="float32")
         if sr != c.sample_rate:
@@ -77,7 +91,10 @@ def _extract_job(audio, entry, c, target):
         if not MIN_FRAMES <= frames <= c.max_frames:
             raise ValueError("audio duration outside admission limits")
         torch.set_num_threads(1)
-        sample = extract(wave, c)
+        sample = reusable(torch.load(reuse, map_location="cpu", weights_only=True), wave, c) if reuse else None
+        reused = sample is not None
+        if sample is None:
+            sample = extract(wave, c)
         sample.update(speaker=c.speakers.index(entry["speaker"]))
         target = Path(target)
         temporary = target.with_name(target.name+".tmp")
@@ -86,7 +103,7 @@ def _extract_job(audio, entry, c, target):
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, target)
-        return {**entry, "frames":frames}
+        return {**entry, "frames":frames}, reused
     except Exception as error:
         return error
 
@@ -101,6 +118,8 @@ def main():
     parser.add_argument("--split", choices=("train", "validation", "test"), required=True)
     parser.add_argument("--resume", action="store_true", help="Skip durably accepted/rejected records from these same inputs")
     parser.add_argument("--workers", type=int, default=1, help="Processes for decoding and pitch tracking (pyin dominates)")
+    parser.add_argument("--reuse", nargs="+", type=Path, default=[], help="Earlier feature directories with the same acoustic "
+                        "settings: a clip with the same id whose stored waveform equals the new audio is copied, not recomputed")
     args = parser.parse_args()
     c = Config.from_dict(json.loads(args.config.read_text())) if args.config else Config()
     args.output.mkdir(parents=True, exist_ok=True)
@@ -141,17 +160,29 @@ def prepare_split(args, c):
             raise ValueError(f"committed feature file is missing: {entry['path']}")
     accepted_count, rejected_count = len(entries), len(rejected)
     workers = max(1, getattr(args, "workers", 1))
+    earlier = {}
+    for directory in getattr(args, "reuse", []):
+        schema = json.loads((directory/"features.json").read_text())
+        if schema["fingerprint"] != c.acoustic_fingerprint:
+            raise ValueError(f"--reuse {directory}: other acoustic settings")
+        for split in ("train", "validation", "test"):
+            if (directory/(split+".jsonl")).exists():
+                for row in recover(directory/(split+".jsonl")):
+                    earlier.setdefault(row["id"], directory/row["path"])
+    reused_count = 0
     with manifest.open("a", encoding="utf-8") as accepted_stream, rejects.open("a", encoding="utf-8") as rejected_stream:
         def finish(record_key, source, identifier, outcome):
             nonlocal accepted_count, rejected_count
+            nonlocal reused_count
             if isinstance(outcome, Exception):
                 seen.discard(identifier)
                 append(rejected_stream, {"record_key":record_key, "id":str(identifier), "source":str(source), "reason":f"{type(outcome).__name__}: {outcome}"})
                 rejected_count += 1
             else:
                 # Journal write failures must abort, not masquerade as bad source rows.
-                append(accepted_stream, outcome)
+                append(accepted_stream, outcome[0])
                 accepted_count += 1
+                reused_count += outcome[1]
 
         def admitted():
             """Cheap checks in order (duplicate ids are decided here, deterministically)."""
@@ -193,7 +224,7 @@ def prepare_split(args, c):
                         finish(record_key, source, identifier, error)
                         continue
                     seen.add(identifier)
-                    yield record_key, source, identifier, (audio, entry, c, str(feature_dir/name))
+                    yield record_key, source, identifier, (audio, entry, c, str(feature_dir/name), earlier.get(identifier))
 
         if workers == 1:
             for record_key, source, identifier, job in admitted():
@@ -211,8 +242,9 @@ def prepare_split(args, c):
                             finish(*pending.pop(future), future.result())
                 for future in concurrent.futures.as_completed(list(pending)):
                     finish(*pending.pop(future), future.result())
-    atomic_json(metadata_path, {"identity":identity, "complete":True, "accepted":accepted_count, "rejected":rejected_count})
-    print(json.dumps({"accepted":accepted_count, "rejected":rejected_count, "manifest":str(manifest)}))
+    atomic_json(metadata_path, {"identity":identity, "complete":True, "accepted":accepted_count, "rejected":rejected_count,
+                                "reused_this_run":reused_count})
+    print(json.dumps({"accepted":accepted_count, "rejected":rejected_count, "reused":reused_count, "manifest":str(manifest)}))
     if not accepted_count:
         raise SystemExit("no usable records; inspect rejected.jsonl")
 

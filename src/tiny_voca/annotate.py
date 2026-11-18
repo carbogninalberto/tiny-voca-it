@@ -57,6 +57,9 @@ def text_key(text):
 def phonemize_texts(rows, cache, workers=16, log=print, profile=ENGLISH):
     known = {}
     for record in recover(cache):
+        if "error" in record:
+            known[record["text_hash"]] = None          # the front end refused this text (e.g. punctuation only)
+            continue
         known[record["text_hash"]] = Phonemized(tuple(record["symbols"]), tuple(profile.symbol_to_id[s] for s in record["symbols"]),
                                                 tuple(record["stress"]), tuple(record["unknown"]))
     todo = {}
@@ -67,8 +70,17 @@ def phonemize_texts(rows, cache, workers=16, log=print, profile=ENGLISH):
             todo[row["text_hash"]] = row["text"]
     if todo:
         log(f"phonemizing {len(todo)} distinct texts")
+        def attempt(text):
+            try:
+                return phonemize(text, profile)
+            except ValueError as error:                 # nothing to pronounce: the row is rejected, not the run
+                return error
         with cache.open("a", encoding="utf-8") as stream, concurrent.futures.ThreadPoolExecutor(workers) as pool:
-            for key, result in zip(todo, pool.map(lambda text: phonemize(text, profile), todo.values())):
+            for key, result in zip(todo, pool.map(attempt, todo.values())):
+                if isinstance(result, ValueError):
+                    known[key] = None
+                    append(stream, {"text_hash": key, "error": str(result)}, sync=False)
+                    continue
                 known[key] = result
                 append(stream, {"text_hash": key, "symbols": list(result.symbols), "stress": list(result.stress),
                                 "unknown": list(result.unknown)}, sync=False)
@@ -197,6 +209,10 @@ def main():
 
     every = [row for split in args.splits for row in rows[split]]
     phonemes = phonemize_texts(every, args.output / "phonemes.jsonl", log=log, profile=profile)
+    unpronounceable = {split: [row for row in rows[split] if phonemes[row["text_hash"]] is None] for split in args.splits}
+    rows = {split: [row for row in rows[split] if phonemes[row["text_hash"]] is not None] for split in args.splits}
+    if any(unpronounceable.values()):
+        log({"unpronounceable": {split: [row["id"] for row in value] for split, value in unpronounceable.items() if value}})
     hashes = {split: {row["text_hash"] for row in rows[split]} for split in args.splits}
     for i, a in enumerate(args.splits):
         for b in args.splits[i + 1:]:
@@ -287,7 +303,9 @@ def main():
     pause_tokens = Counter()
     pause_nonzero = Counter()
     for split in args.splits:
-        accepted, rejected = [], []
+        accepted = []
+        rejected = [{"id": row["id"], "speaker": row["speaker"], "text": row["text"], "reasons": ["unpronounceable_text"]}
+                    for row in unpronounceable[split]]
         for row in rows[split]:
             record = raw[split][row["id"]]
             result = phonemes[row["text_hash"]]

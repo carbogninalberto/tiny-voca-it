@@ -5,7 +5,7 @@ import unittest
 
 import numpy as np
 
-from tiny_voca.dataset_import import assign_splits, audio_hash, check_audio, connected_groups, dedup_text
+from tiny_voca.dataset_import import assign_splits, audio_hash, check_audio, connected_groups, dedup_text, keep_held_out
 
 
 def records(count=60):
@@ -38,6 +38,19 @@ class DatasetImportTests(unittest.TestCase):
         splits = assign_splits(rows, groups, seed=7)
         self.assertEqual(splits["r010"], splits["r040"])
         self.assertEqual(splits["r020"], splits["r050"])
+
+    def test_keeping_an_earlier_held_out_set(self):
+        def record(i, group, text=None):
+            return {"id": i, "text": text or f"testo {i}", "audio_sha256": i, "group": group, "seconds": 5.0}
+        records = [record("a", "g1"), record("b", "g1"), record("c", "g2"), record("d", "g3"), record("e", "g4"),
+                   record("f", "g5", text="testo a")]           # same transcript as held-out clip "a"
+        groups = connected_groups(records)
+        splits = keep_held_out(records, groups, {"a": "validation", "c": "test"})
+        self.assertEqual(splits, {"a": "validation", "b": None, "c": "test", "d": "train", "e": "train", "f": None})
+        with self.assertRaisesRegex(ValueError, "missing"):
+            keep_held_out(records, groups, {"z": "test"})
+        with self.assertRaisesRegex(ValueError, "validation and test"):
+            keep_held_out(records, groups, {"a": "validation", "b": "test"})
 
     def test_too_few_groups_fails_clearly(self):
         rows = [{**r, "group": "one-book", "audio_sha256": "x"} for r in records(6)]

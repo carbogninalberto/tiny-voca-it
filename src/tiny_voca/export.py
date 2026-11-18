@@ -33,6 +33,7 @@ from torch import nn
 import torch.nn.functional as F
 
 from .infer import load_model, match_frontend
+from .model import COMPRESSION, jitter_offset
 from .text import frontend_fingerprint, frontend_identity
 
 INPUTS = ("tokens", "stress", "voice", "speed", "pitch_shift", "pitch_range")
@@ -80,7 +81,8 @@ class Exportable(nn.Module):
                                         ("noise", _cepstrum_matrices(list(range(c.noise_cep)), c.noise_fft))):
             self.register_buffer(f"{name}_real", real, persistent=False)
             self.register_buffer(f"{name}_imaginary", imaginary, persistent=False)
-        for name, window in (("synth", v.synth_window), ("noise", v.noise_window)):
+        windows = [("synth", v.synth_window), ("noise", v.noise_window)] + ([("head", v.head.window)] if v.head is not None else [])
+        for name, window in windows:
             real, imaginary = _analysis_kernels(window)
             self.register_buffer(f"{name}_analysis_real", real, persistent=False)
             self.register_buffer(f"{name}_analysis_imaginary", imaginary, persistent=False)
@@ -108,7 +110,7 @@ class Exportable(nn.Module):
         angle = cepstrum @ imaginary
         return magnitude * torch.cos(angle), magnitude * torch.sin(angle)
 
-    def _pulses(self, f0):
+    def _pulses(self, f0, log_offset=None):
         """``pulse_train`` for one utterance, without 64-bit floats (the web
         runtime has none). The phase is summed inside each frame in float32,
         where it stays below a few cycles, and across frames as 24-bit integer
@@ -117,7 +119,10 @@ class Exportable(nn.Module):
         knots = torch.log(f0.clamp_min(1.0))
         knots = torch.cat((knots, knots[:, -1:]), dim=1)
         low, high = knots[:, :-1, None], knots[:, 1:, None]
-        frequency = torch.exp(low * (1 - self.ramp) + high * self.ramp)
+        log_frequency = low * (1 - self.ramp) + high * self.ramp
+        if log_offset is not None:
+            log_frequency = log_frequency + log_offset.reshape(1, -1, c.hop)
+        frequency = torch.exp(log_frequency)
         within = torch.cumsum(frequency / c.sample_rate, dim=2)
         whole_frame = within[:, :, -1]
         steps = torch.round((whole_frame - torch.floor(whole_frame)) * self.phase_steps).long()
@@ -157,13 +162,54 @@ class Exportable(nn.Module):
         gain = n[..., c.noise_cep:].flatten(1).index_select(1, sub)[..., None]
         shape = torch.cat((shape[..., :1] + gain, shape[..., 1:]), dim=-1)
         noise_real, noise_imaginary = self._response(shape, self.noise_real, self.noise_imaginary)
-        pulses = self._pulses(f0)
         if noise is None:
-            noise = torch.randn_like(pulses)
+            noise = torch.randn_like(f0[:, :, None].expand(-1, -1, c.hop).reshape(1, -1))
         else:
             noise = noise.index_select(1, torch.arange(c.hop * total, device=hidden.device))
-        return (self._filter(pulses, harmonic_real, harmonic_imaginary, "synth", c.synth_fft, c.synth_hop)
+        offset = jitter_offset(noise, c.excitation_jitter) if c.excitation_jitter > 0 else None
+        pulses = self._pulses(f0, offset)
+        wave = (self._filter(pulses, harmonic_real, harmonic_imaginary, "synth", c.synth_fft, c.synth_hop)
                 + self._filter(noise, noise_real, noise_imaginary, "noise", c.noise_fft, c.noise_hop))
+        wave = wave if v.postfilter is None else self._postfilter(wave, hidden, total)
+        return wave if v.head is None else self._head(wave, hidden, total)
+
+    def _head(self, wave, hidden, total):
+        """``SpectralHead`` for one utterance with convolution STFTs (same frames
+        as torch.stft/istft with center=True and half a window of trailing zeros)."""
+        h = self.model.vocoder.head
+        fft, hop, samples = h.fft, h.hop, wave.shape[1]
+        padded = F.pad(wave[:, None], (fft // 2, fft))
+        real = F.conv1d(padded, self.head_analysis_real, stride=hop)                # [1, bins, frames]
+        imaginary = F.conv1d(padded, self.head_analysis_imaginary, stride=hop)
+        index = torch.minimum(torch.arange(real.shape[-1], device=wave.device), total - 1)
+        condition = hidden.index_select(1, index).transpose(1, 2)
+        real, imaginary = h.correct(real, imaginary, condition, 1.0)
+        out = F.conv_transpose1d(torch.cat((real, imaginary), dim=1), self.head_synthesis, stride=hop)
+        envelope = F.conv_transpose1d(torch.ones_like(real[:, :1]), self.head_envelope, stride=hop)
+        return (out / envelope)[:, 0, fft // 2:fft // 2 + samples]
+
+    def _postfilter(self, wave, hidden, total):
+        """``SpectralPostFilter`` for one utterance, with convolution STFTs in
+        place of complex tensors (same frames as torch.stft/istft, center=True)."""
+        p = self.model.vocoder.postfilter
+        fft, hop, samples = p.fft, p.hop, wave.shape[1]
+        padded = F.pad(wave[:, None], (fft // 2, fft))     # centring plus half a window of trailing zeros
+        real = F.conv1d(padded, self.synth_analysis_real, stride=hop)              # [1, bins, frames]
+        imaginary = F.conv1d(padded, self.synth_analysis_imaginary, stride=hop)
+        magnitude = torch.sqrt(real * real + imaginary * imaginary + 1e-10)
+        scale = (magnitude + 1e-4) ** (COMPRESSION - 1)
+        index = torch.minimum(torch.div(torch.arange(real.shape[-1], device=wave.device), p.steps, rounding_mode="floor"),
+                              total - 1)
+        condition = p.condition(hidden).index_select(1, index).transpose(1, 2)     # [1, bins, frames]
+        x = p.input(torch.stack((real * scale, imaginary * scale, torch.log(magnitude + 1e-4), condition), dim=1))
+        for block in p.blocks:
+            x = block(x, 1.0)
+        correction = p.output(x)
+        level = (magnitude + 1e-4) ** (1 - COMPRESSION)
+        spectrum = torch.cat((real + correction[:, 0] * level, imaginary + correction[:, 1] * level), dim=1)
+        out = F.conv_transpose1d(spectrum, self.synth_synthesis, stride=hop)
+        envelope = F.conv_transpose1d(torch.ones_like(real[:, :1]), self.synth_envelope, stride=hop)
+        return (out / envelope)[:, 0, fft // 2:fft // 2 + samples]
 
     def forward(self, tokens, stress, voice, speed, pitch_shift, pitch_range, noise=None):
         m = self.model

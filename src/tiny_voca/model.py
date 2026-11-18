@@ -110,13 +110,27 @@ class Predictor(nn.Module):
         return self.out(x) * mask[..., None]
 
 
-def pulse_train(f0, sample_rate, hop, limit=0.47, phase=None):
+JITTER_TAPS = 25   # about 1 ms at 24 kHz
+
+
+def jitter_offset(noise, amount):
+    """Log-frequency perturbation [B, samples] for the pulse train, made from the
+    same white noise that drives the noise branch: smoothed over about 1 ms and
+    scaled to standard deviation ``amount``. Deterministic given the noise, so
+    PyTorch and ONNX synthesis stay identical."""
+    kernel = torch.hann_window(JITTER_TAPS + 2, periodic=False, device=noise.device, dtype=noise.dtype)[1:-1]
+    kernel = (kernel / kernel.norm())[None, None]
+    return amount * F.conv1d(noise[:, None], kernel, padding=JITTER_TAPS // 2)[:, 0]
+
+
+def pulse_train(f0, sample_rate, hop, limit=0.47, phase=None, log_offset=None):
     """Band-limited pulse train [B, T*hop] with unit power for f0 [B, T] in Hz.
 
     Frame values sit at samples i*hop and are interpolated in the log domain.
     The sum of all harmonics below ``limit * sample_rate`` has the closed form
     sin((K+1/2)x) / (2 sin(x/2)) - 1/2; the top harmonic fades in and out so the
     signal stays continuous while the pitch glides. Float64 keeps the phase exact.
+    ``log_offset`` [B, T*hop] is added to the interpolated log frequency (jitter).
     """
     frames = f0.shape[1]
     knots = torch.log(f0.double().clamp_min(1.0))
@@ -124,7 +138,10 @@ def pulse_train(f0, sample_rate, hop, limit=0.47, phase=None):
     position = torch.arange(frames * hop, device=f0.device, dtype=torch.float64) / hop
     low = position.floor().long()
     weight = position - low
-    frequency = torch.exp(knots[:, low] * (1 - weight) + knots[:, low + 1] * weight)
+    log_frequency = knots[:, low] * (1 - weight) + knots[:, low + 1] * weight
+    if log_offset is not None:
+        log_frequency = log_frequency + log_offset.double()
+    frequency = torch.exp(log_frequency)
     theta = 2 * math.pi * torch.cumsum(frequency / sample_rate, dim=1)
     if phase is not None:
         theta = theta + phase.double()[:, None]
@@ -157,6 +174,130 @@ def cepstrum_response(causal, anticausal, fft):
     return torch.polar(torch.exp(spectrum.real.clamp(-14, 6)), spectrum.imag)
 
 
+COMPRESSION = 0.3
+
+
+class PostFilterBlock(nn.Module):
+    """ConvNeXt block over a [B, C, frequency, time] map; frames past an
+    utterance's end stay zero so batching never changes real audio."""
+
+    def __init__(self, channels):
+        super().__init__()
+        self.depthwise = nn.Conv2d(channels, channels, 7, padding=3, groups=channels)
+        self.norm = nn.LayerNorm(channels)
+        self.expand = nn.Conv2d(channels, 2 * channels, 1)
+        self.project = nn.Conv2d(2 * channels, channels, 1)
+
+    def forward(self, x, mask):
+        y = self.norm(self.depthwise(x).permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+        return (x + self.project(F.gelu(self.expand(y)))) * mask
+
+
+class SpectralPostFilter(nn.Module):
+    """Complex correction of the synthesized STFT (synth_fft / synth_hop), after
+    Wavehax (Yoneyama et al., 2024) with the source-filter output as the harmonic
+    prior. Inputs per bin: compressed real and imaginary parts, log magnitude and a
+    per-frame projection of the acoustic state. The correction is scaled by the
+    bin's own level and starts at zero, so a new post-filter is the identity."""
+
+    def __init__(self, c):
+        super().__init__()
+        self.fft, self.hop, self.steps = c.synth_fft, c.synth_hop, c.hop // c.synth_hop
+        width = c.postfilter_channels
+        self.condition = nn.Linear(c.channels, c.synth_fft // 2 + 1)
+        self.input = nn.Conv2d(4, width, (7, 1), padding=(3, 0))
+        self.blocks = nn.ModuleList(PostFilterBlock(width) for _ in range(c.postfilter_blocks))
+        self.output = nn.Conv2d(width, 2, 1)
+        nn.init.zeros_(self.output.weight)
+        nn.init.zeros_(self.output.bias)
+        self.register_buffer("window", torch.hann_window(c.synth_fft), persistent=False)
+
+    def forward(self, wave, hidden, lengths):
+        # Half a window of trailing zeros, and the frames that reach into it use the
+        # last real frame's state: an utterance's end is then processed the same way
+        # alone or padded inside a batch (frames further out are masked to zero).
+        padded = F.pad(wave, (0, self.fft // 2))
+        frames = padded.shape[-1] // self.hop + 1
+        spectrum = torch.stft(padded, self.fft, self.hop, window=self.window, center=True, pad_mode="constant", return_complex=True)
+        position = torch.arange(frames, device=wave.device)[None]
+        mask = (position <= (lengths * self.steps + self.fft // (2 * self.hop))[:, None]).to(wave.dtype)[:, None, None]
+        index = torch.minimum(position // self.steps, (lengths - 1).clamp_min(0)[:, None])
+        condition = self.condition(hidden)
+        condition = condition.gather(1, index[..., None].expand(-1, -1, condition.shape[-1])).transpose(1, 2)
+        magnitude = torch.sqrt(spectrum.real.square() + spectrum.imag.square() + 1e-10)
+        compressed = spectrum * (magnitude + 1e-4) ** (COMPRESSION - 1)
+        x = torch.stack((compressed.real, compressed.imag, torch.log(magnitude + 1e-4), condition), dim=1) * mask
+        x = self.input(x) * mask
+        for block in self.blocks:
+            x = block(x, mask)
+        correction = self.output(x) * mask
+        spectrum = spectrum + torch.complex(correction[:, 0], correction[:, 1]) * (magnitude + 1e-4) ** (1 - COMPRESSION)
+        return torch.istft(spectrum, self.fft, self.hop, window=self.window, center=True, length=padded.shape[-1])[:, :wave.shape[-1]]
+
+
+class HeadBlock(nn.Module):
+    """ConvNeXt block over [B, C, frames]; frames past an utterance's end stay zero."""
+
+    def __init__(self, channels):
+        super().__init__()
+        self.depthwise = nn.Conv1d(channels, channels, 7, padding=3, groups=channels)
+        self.norm = nn.LayerNorm(channels)
+        self.expand = nn.Linear(channels, 3 * channels)
+        self.project = nn.Linear(3 * channels, channels)
+
+    def forward(self, x, mask):
+        y = self.project(F.gelu(self.expand(self.norm(self.depthwise(x).transpose(1, 2))))).transpose(1, 2)
+        return (x + y) * mask
+
+
+class SpectralHead(nn.Module):
+    """Frame-rate neural refinement of the source-filter output.
+
+    The synthesis is analysed with an STFT of ``head_fft`` points at the acoustic
+    hop (one frame per acoustic frame). Per frame, a ConvNeXt stack reads every
+    bin's compressed real and imaginary part together with the acoustic state and
+    predicts a complex correction for every bin, scaled by the bin's own level;
+    the result is inverted. Working per frame instead of per bin keeps the cost
+    low (Vocos), and the pulse train as input keeps the pitch exact (Wavehax).
+    The correction starts at zero: a new head is the identity."""
+
+    def __init__(self, c):
+        super().__init__()
+        self.fft, self.hop, self.bins = c.head_fft, c.hop, c.head_fft // 2 + 1
+        width = c.head_channels
+        self.input = nn.Conv1d(2 * self.bins + c.channels, width, 1)
+        self.blocks = nn.ModuleList(HeadBlock(width) for _ in range(c.head_blocks))
+        self.norm = nn.LayerNorm(width)
+        self.output = nn.Conv1d(width, 2 * self.bins, 1)
+        nn.init.zeros_(self.output.weight)
+        nn.init.zeros_(self.output.bias)
+        self.register_buffer("window", torch.hann_window(c.head_fft), persistent=False)
+
+    def correct(self, real, imaginary, condition, mask):
+        """real, imaginary [B, bins, frames]; condition [B, channels, frames]."""
+        magnitude = torch.sqrt(real * real + imaginary * imaginary + 1e-10)
+        scale = (magnitude + 1e-4) ** (COMPRESSION - 1)
+        x = self.input(torch.cat((real * scale, imaginary * scale, condition), dim=1) * mask) * mask
+        for block in self.blocks:
+            x = block(x, mask)
+        correction = self.output(self.norm(x.transpose(1, 2)).transpose(1, 2)) * mask
+        level = (magnitude + 1e-4) ** (1 - COMPRESSION)
+        return real + correction[:, :self.bins] * level, imaginary + correction[:, self.bins:] * level
+
+    def forward(self, wave, hidden, lengths):
+        # Half a window of trailing zeros; frames reaching into it use the last real
+        # frame's state, frames further out are masked: batching never changes audio.
+        padded = F.pad(wave, (0, self.fft // 2))
+        spectrum = torch.stft(padded, self.fft, self.hop, window=self.window, center=True, pad_mode="constant", return_complex=True)
+        position = torch.arange(spectrum.shape[-1], device=wave.device)[None]
+        mask = (position <= (lengths + self.fft // (2 * self.hop))[:, None]).to(wave.dtype)[:, None]
+        index = torch.minimum(position, (lengths - 1).clamp_min(0)[:, None])
+        condition = hidden.gather(1, index[..., None].expand(-1, -1, hidden.shape[-1])).transpose(1, 2)
+        real, imaginary = self.correct(spectrum.real, spectrum.imag, condition, mask)
+        return torch.istft(torch.complex(real, imaginary), self.fft, self.hop, window=self.window, center=True,
+                           length=padded.shape[-1])[:, :wave.shape[-1]]
+
+
 class SourceFilter(nn.Module):
     """Harmonic-plus-noise synthesis controlled per frame by two linear heads."""
 
@@ -181,6 +322,8 @@ class SourceFilter(nn.Module):
         self.register_buffer("noise_lifter", lifter(c.noise_cep, 0), persistent=False)
         self.register_buffer("synth_window", torch.hann_window(c.synth_fft), persistent=False)
         self.register_buffer("noise_window", torch.hann_window(c.noise_fft), persistent=False)
+        self.postfilter = SpectralPostFilter(c) if c.postfilter_channels else None
+        self.head = SpectralHead(c) if c.head_channels else None
 
     @staticmethod
     def _take(values, index):
@@ -225,11 +368,16 @@ class SourceFilter(nn.Module):
             # Hold the last real pitch value through padding: the pitch glide inside an
             # utterance's final frame must not depend on what the batch was padded with.
             f0 = f0.float().gather(1, torch.minimum(torch.arange(frames, device=f0.device)[None], last))
-            pulses = pulse_train(f0, c.sample_rate, c.hop, c.harmonic_limit, phase) * audible
             if noise is None:
                 noise = torch.randn(hidden.shape[0], samples, device=hidden.device)
+            offset = jitter_offset(noise * audible, c.excitation_jitter) if c.excitation_jitter > 0 else None
+            pulses = pulse_train(f0, c.sample_rate, c.hop, c.harmonic_limit, phase, offset) * audible
             wave = (self._shape(pulses, harmonic_response, c.synth_fft, c.synth_hop, self.synth_window)
                     + self._shape(noise * audible, noise_response, c.noise_fft, c.noise_hop, self.noise_window))
+            if self.postfilter is not None:
+                wave = self.postfilter(wave * audible, hidden, lengths)
+            if self.head is not None:
+                wave = self.head(wave * audible, hidden, lengths)
             return wave * audible
 
 
@@ -246,6 +394,14 @@ class TinyVoca(nn.Module):
         # one regression would average both cases into a pause that is too short.
         self.duration = Predictor(c, 2)
         self.frame_voices = nn.Embedding(len(c.speakers), c.channels)
+        if c.emotions:
+            # Scaled by intensity, so intensity 0 (and every unlabelled corpus) adds nothing.
+            self.emotions = nn.Embedding(len(c.emotions), c.channels)
+            self.frame_emotions = nn.Embedding(len(c.emotions), c.channels)
+            for table in (self.emotions, self.frame_emotions):
+                nn.init.normal_(table.weight, std=0.02)
+        else:
+            self.emotions = self.frame_emotions = None
         self.frame_position = nn.Linear(3, c.channels)
         self.prosody_stack = Stack(c, c.prosody_layers)
         # Outputs: continuous log(F0/reference), voiced logit, normalized log RMS energy.
@@ -253,6 +409,8 @@ class TinyVoca(nn.Module):
         self.prosody_projection = nn.Linear(3, c.channels)
         self.acoustic_stack = Stack(c, c.acoustic_layers)
         self.vocoder = SourceFilter(c)
+        # Optional log-mel output for a neural vocoder (Vocos convention, see Config).
+        self.mel_output = nn.Linear(c.channels, c.vocos_mels) if c.vocos_mels else None
         # Token classes come from this model's own language profile, never from
         # process-wide state: models of different languages can coexist.
         profile = c.profile
@@ -263,16 +421,23 @@ class TinyVoca(nn.Module):
         vowels[sorted(profile.vowel_ids)] = True
         self.register_buffer("vowel_tokens", vowels, persistent=False)
 
-    def encode(self, tokens, stress, lengths, speakers):
+    def emotion_vector(self, table, emotions, intensities, batch, like):
+        """[B, channels] contribution of the emotion input (zeros without one)."""
+        if table is None or emotions is None:
+            return torch.zeros(batch, like.shape[-1], device=like.device, dtype=like.dtype)
+        return table(emotions) * intensities.to(like.dtype)[:, None]
+
+    def encode(self, tokens, stress, lengths, speakers, emotions=None, intensities=None):
         if tokens.ndim != 2 or stress.shape != tokens.shape or lengths.shape != (tokens.shape[0],) or speakers.shape != lengths.shape:
             raise ValueError("expected tokens[B,N], stress[B,N], lengths[B], speakers[B]")
         if tokens.shape[1] > self.config.max_tokens or bool((lengths < 1).any()) or bool((lengths > tokens.shape[1]).any()):
             raise ValueError("invalid token length")
         mask = length_mask(lengths, tokens.shape[1])
-        x = (self.tokens(tokens) + self.stress(stress) + self.voices(speakers)[:, None]) * mask[..., None]
+        x = self.tokens(tokens) + self.stress(stress) + self.voices(speakers)[:, None]
+        x = (x + self.emotion_vector(self.emotions, emotions, intensities, len(lengths), x)[:, None]) * mask[..., None]
         return self.encoder(x, mask), mask
 
-    def expand(self, hidden, durations, token_mask, speakers):
+    def expand(self, hidden, durations, token_mask, speakers, emotions=None, intensities=None):
         """Repeat token states by integer durations (zero is allowed for pause
         tokens) and add each frame's position inside its token."""
         if durations.shape != token_mask.shape or bool((durations < 0).any()) or bool((durations[~token_mask] != 0).any()):
@@ -291,6 +456,7 @@ class TinyVoca(nn.Module):
         mask = frame < lengths[:, None]
         expanded = hidden.gather(1, index[..., None].expand(-1, -1, hidden.shape[-1]))
         expanded = expanded + self.frame_position(features) + self.frame_voices(speakers)[:, None]
+        expanded = expanded + self.emotion_vector(self.frame_emotions, emotions, intensities, len(lengths), expanded)[:, None]
         return expanded * mask[..., None], mask, lengths
 
     def predict_prosody(self, frames, frame_mask):
@@ -344,13 +510,13 @@ class TinyVoca(nn.Module):
 
     @torch.inference_mode()
     def synthesize(self, tokens, stress, lengths, speakers, speed=1.0, pitch_shift=0.0, seed=0, pitch_range=1.0, pitch_jitter=0.0,
-                   voiced_vowels=True):
+                   voiced_vowels=True, emotions=None, intensities=None):
         """Free-running synthesis: predicted durations, pitch, voicing and energy."""
         if not math.isfinite(speed) or not 0.25 <= speed <= 4 or not math.isfinite(pitch_shift) or not 0 <= pitch_range <= 3:
             raise ValueError("speed must be between 0.25 and 4, pitch_shift finite and pitch_range between 0 and 3")
-        hidden, mask = self.encode(tokens, stress, lengths, speakers)
+        hidden, mask = self.encode(tokens, stress, lengths, speakers, emotions, intensities)
         durations = self.predict_durations(hidden, mask, tokens, speed)
-        frames, frame_mask, frame_lengths = self.expand(hidden, durations, mask, speakers)
+        frames, frame_mask, frame_lengths = self.expand(hidden, durations, mask, speakers, emotions, intensities)
         prosody_hidden, prosody = self.predict_prosody(frames, frame_mask)
         if voiced_vowels:
             # The pitch tracker missed creaky vowels in the recordings, and the
@@ -372,4 +538,7 @@ class TinyVoca(nn.Module):
         if pitch_jitter > 0:
             pitch = pitch + self.pitch_wobble(pitch.shape, pitch_jitter, seed, pitch.device)
         wave = self.vocoder(acoustic, self.frequency(pitch), frame_lengths, noise=noise.to(hidden.device))
-        return wave, frame_lengths * self.config.hop, {"durations": durations, "prosody": prosody, "frame_mask": frame_mask}
+        details = {"durations": durations, "prosody": prosody, "frame_mask": frame_mask}
+        if self.mel_output is not None:
+            details["mel"] = self.mel_output(acoustic) * frame_mask[..., None]
+        return wave, frame_lengths * self.config.hop, details

@@ -229,6 +229,26 @@ class DataTests(unittest.TestCase):
             self.assertGreater(int(voiced.sum()), 10)
             self.assertLess(float(stored["prosody"][voiced, 0].abs().median()), 0.1)   # 200 Hz -> log(F0/200) = 0
             self.assertEqual(len(load_acoustic_rows(output, "train", c)), 2)
+            # A second preparation reuses verified-identical features and recomputes changed audio.
+            louder = io.BytesIO()
+            sf.write(louder, 0.2 * np.sin(2 * np.pi * 200 * time), 24000, format="WAV")
+            rows[1]["audio"] = {"bytes": louder.getvalue()}
+            again = root / "again.parquet"
+            pq.write_table(pa.Table.from_pylist(rows), again)
+            second = root / "second"
+            second.mkdir()
+            args = SimpleNamespace(output=second, inputs=[again], split="train", text_column="text", speaker_column="voice_id",
+                                   resume=False, reuse=[output])
+            with patch("tiny_voca.prepare.extract", wraps=extract) as dsp:
+                prepare_split(args, c)
+                self.assertEqual(dsp.call_count, 1)                    # only the clip whose audio changed
+            self.assertEqual(json.loads((second / "train.preparation.json").read_text())["reused_this_run"], 1)
+            copied = torch.load(second / committed[0]["path"], weights_only=True)
+            for key in ("wave", "mel", "prosody"):
+                torch.testing.assert_close(copied[key], stored[key], rtol=0, atol=0)
+            recomputed = torch.load(second / recover(second / "train.jsonl")[1]["path"], weights_only=True)
+            self.assertFalse(torch.equal(recomputed["wave"], torch.load(output / recover(output / "train.jsonl")[1]["path"],
+                                                                         weights_only=True)["wave"]))
 
 
 if __name__ == "__main__":

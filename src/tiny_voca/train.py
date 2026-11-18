@@ -8,6 +8,7 @@ downloads and no infrastructure management happen here.
 
 import argparse
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 import json
 import math
 import os
@@ -19,7 +20,7 @@ from torch.nn import functional as F
 from .config import CHECKPOINT_FORMAT, Config
 from .data import AnnotatedDataset, BucketSampler, collate
 from .journal import file_hash
-from .losses import Discriminators, SpectralLoss, discriminator_loss, generator_gan_loss, masked_mean
+from .losses import Discriminators, SpectralLoss, VocosMel, discriminator_loss, generator_gan_loss, masked_mean
 from .model import TinyVoca
 from .text import frontend_fingerprint, frontend_identity
 
@@ -29,14 +30,39 @@ from .text import frontend_fingerprint, frontend_identity
 ADAPT_MODES = {
     "embedding": ("model.voices.", "model.frame_voices."),
     "acoustic": ("model.voices.", "model.frame_voices.", "model.duration.", "model.frame_position.", "model.prosody_stack.",
-                 "model.prosody_head.", "model.prosody_projection.", "model.acoustic_stack.", "model.vocoder.", "mel_head."),
+                 "model.prosody_head.", "model.prosody_projection.", "model.acoustic_stack.", "model.vocoder.", "model.mel_output.",
+                 "mel_head."),
     "full": ("",),
 }
 SPEAKER_TABLES = ("model.voices.weight", "model.frame_voices.weight")
 
+VOCOS_MEL_WEIGHT = 2.0
 WEIGHTS = {"duration": 1.0, "pause": 1.0, "pitch": 2.0, "pitch_spread": 2.0, "voicing": 1.0, "energy": 1.0, "mel_head": 2.0,
            "stft": 2.0, "mel": 10.0}
 SEMITONES = 12 / math.log(2)
+
+
+class Throttle:
+    """Pause after every step for the time given in a JSON file ({"sleep": s}),
+    re-read every few seconds, so an outside monitor can cap GPU load and power
+    while training runs. Pauses never change what is computed."""
+
+    def __init__(self, path, every=5.0):
+        self.path, self.every, self.sleep, self.checked = path, every, 0.0, -math.inf
+
+    def __call__(self):
+        if self.path is None:
+            return 0.0
+        now = time.monotonic()
+        if now - self.checked >= self.every:
+            self.checked = now
+            try:
+                self.sleep = min(5.0, max(0.0, float(json.loads(Path(self.path).read_text())["sleep"])))
+            except (OSError, ValueError, KeyError, TypeError):
+                pass        # keep the last valid value while the file is rewritten
+        if self.sleep > 0:
+            time.sleep(self.sleep)
+        return self.sleep
 
 
 def masked_std(value, mask):
@@ -52,6 +78,7 @@ class TrainingSystem(nn.Module):
         self.model = TinyVoca(config)
         self.mel_head = nn.Linear(config.channels, config.n_mels)   # auxiliary, not exported
         self.spectral = SpectralLoss(config.sample_rate)
+        self.vocos_mel = VocosMel(bands=config.vocos_mels or 100) if config.vocos_mels or config.vocos_mel_loss else None
 
     def objective(self, batch, teacher_probability, weights=WEIGHTS, random_phase=True):
         """Loss on full utterances. Returns ``(loss, terms, auxiliary)``.
@@ -63,7 +90,7 @@ class TrainingSystem(nn.Module):
         waveform target does.
         """
         m, c = self.model, self.model.config
-        hidden, token_mask = m.encode(batch["tokens"], batch["stress"], batch["token_lengths"], batch["speakers"])
+        hidden, token_mask = m.encode(batch["tokens"], batch["stress"], batch["token_lengths"], batch["speakers"], batch.get("emotions"), batch.get("intensities"))
         output = m.duration(hidden, token_mask).float()
         # Length is learned only where a token has frames; whether a pause-capable
         # token has any is a separate yes/no target.
@@ -71,7 +98,7 @@ class TrainingSystem(nn.Module):
         duration = masked_mean((output[..., 0] - torch.log1p(batch["durations"].float())).square(), token_mask & present)
         pausable = token_mask & ~m.phone_tokens[batch["tokens"]]
         pause = masked_mean(F.binary_cross_entropy_with_logits(output[..., 1], present.float(), reduction="none"), pausable)
-        frames, frame_mask, lengths = m.expand(hidden, batch["durations"], token_mask, batch["speakers"])
+        frames, frame_mask, lengths = m.expand(hidden, batch["durations"], token_mask, batch["speakers"], batch.get("emotions"), batch.get("intensities"))
         if not torch.equal(lengths, batch["frame_lengths"]):
             raise ValueError("durations do not sum to the acoustic frame count")
         prosody_hidden, prediction = m.predict_prosody(frames, frame_mask)
@@ -99,6 +126,19 @@ class TrainingSystem(nn.Module):
         terms = dict(duration=duration, pause=pause, pitch=pitch, pitch_spread=pitch_spread, voicing=voicing, energy=energy,
                      mel_head=mel_head, stft=stft, mel=mel)
         loss = sum(weights[name] * value for name, value in terms.items())
+        if c.vocos_mel_loss:
+            frames_vocos = self.vocos_mel(batch["wave"]).shape[1]
+            vocos_mask = torch.arange(frames_vocos, device=lengths.device)[None] <= lengths[:, None]
+            with torch.no_grad():
+                real_vocos = self.vocos_mel(batch["wave"])
+            terms["vocoder_input"] = masked_mean((self.vocos_mel(wave) - real_vocos).abs().mean(-1), vocos_mask)
+            loss = loss + c.vocos_mel_loss * terms["vocoder_input"]
+        if m.mel_output is not None:
+            # Kept out of WEIGHTS so existing recipes (and their resume checks) are unchanged.
+            with torch.no_grad():
+                vocos_target = self.vocos_mel(batch["wave"])[:, :frame_mask.shape[1]]
+            terms["vocos_mel"] = masked_mean((m.mel_output(acoustic).float() - vocos_target).abs().mean(-1), frame_mask)
+            loss = loss + VOCOS_MEL_WEIGHT * terms["vocos_mel"]
         with torch.no_grad():
             voiced = sung
             predicted = m.predict_durations(hidden, token_mask, batch["tokens"])
@@ -125,10 +165,76 @@ def crops(fake, real, lengths, size, count):
     return fake.gather(1, index).view(-1, size), real.gather(1, index).view(-1, size), index
 
 
-def learning_rate(step, base, warmup, half_life, start=0):
-    """Linear warm-up from ``start`` (0, or the step a run was branched at),
-    then halving every ``half_life`` steps."""
-    return base * min(1.0, (step - start + 1) / max(warmup, 1)) * 0.5 ** (step / half_life)
+SCHEDULES = ("half_life", "cosine")
+# Recipe fields added after format 4. A run recorded without them used these
+# values, so resuming it compares equal and behaves exactly as before.
+RECIPE_DEFAULTS = {"schedule": "half_life", "lr_floor": 0.0, "ema_decay": None, "total_steps": None}
+
+
+def learning_rate(step, base, warmup, half_life, start=0, schedule="half_life", total=None, floor=0.0):
+    """Linear warm-up from ``start`` (0, or the step a run was branched at), then
+    either halving every ``half_life`` steps or a cosine from ``base`` down to
+    ``floor * base`` at step ``total`` (the end of this run)."""
+    ramp = min(1.0, (step - start + 1) / max(warmup, 1))
+    if schedule == "half_life":
+        return base * ramp * 0.5 ** (step / half_life)
+    if schedule != "cosine" or total is None or total <= start:
+        raise ValueError("cosine schedule needs the run's final step")
+    progress = min(1.0, max(0.0, (step - start) / (total - start)))
+    return base * ramp * (floor + (1 - floor) * 0.5 * (1 + math.cos(math.pi * progress)))
+
+
+class EMA:
+    """Exponential moving average of the inference model's weights (float32).
+
+    Training-only. The decay ramps up as (1 + n) / (10 + n) over the first
+    updates so that early, still-random weights are forgotten quickly. Buffers
+    are copied, not averaged. The exported inference checkpoint uses these
+    weights when the run has an EMA.
+    """
+
+    def __init__(self, model, decay, updates=0):
+        self.decay, self.updates = decay, updates
+        self.shadow = {k: v.detach().float().clone() for k, v in model.state_dict().items()}
+
+    @torch.no_grad()
+    def update(self, model):
+        self.updates += 1
+        decay = min(self.decay, (1 + self.updates) / (10 + self.updates))
+        for name, value in model.state_dict().items():
+            if value.dtype.is_floating_point:
+                self.shadow[name].lerp_(value.detach().float(), 1 - decay)
+            else:
+                self.shadow[name].copy_(value)
+
+    def state_dict(self):
+        return {"decay": self.decay, "updates": self.updates, "shadow": self.shadow}
+
+    def load_state_dict(self, state):
+        if set(state["shadow"]) != set(self.shadow):
+            raise ValueError("EMA tensors do not match the model")
+        self.decay, self.updates = state["decay"], state["updates"]
+        self.shadow = {k: v.float().clone() for k, v in state["shadow"].items()}
+
+    def weights_for(self, model):
+        """The shadow in the model's own dtypes, ready for load_state_dict."""
+        current = model.state_dict()
+        return {k: v.to(dtype=current[k].dtype, device=current[k].device) for k, v in self.shadow.items()}
+
+
+def swapped_weights(model, weights):
+    """Context manager: run with ``weights`` loaded, then restore the originals exactly."""
+    from contextlib import contextmanager
+
+    @contextmanager
+    def manager():
+        original = {k: v.detach().clone() for k, v in model.state_dict().items()}
+        model.load_state_dict(weights)
+        try:
+            yield model
+        finally:
+            model.load_state_dict(original)
+    return manager()
 
 
 def teacher_probability(step, hold, ramp, final):
@@ -139,10 +245,11 @@ def teacher_probability(step, hold, ramp, final):
 def optimize_step(system, critics, optimizer, critic_optimizer, batch, step, recipe, parameters=None):
     weights = recipe["weights"]
     start = (recipe.get("branched_from") or {}).get("step", 0)
+    schedule = {"schedule": recipe.get("schedule", "half_life"), "total": recipe.get("total_steps"), "floor": recipe.get("lr_floor", 0.0)}
     for group in optimizer.param_groups:
-        group["lr"] = learning_rate(step, recipe["learning_rate"], recipe["warmup"], recipe["lr_half_life"], start)
+        group["lr"] = learning_rate(step, recipe["learning_rate"], recipe["warmup"], recipe["lr_half_life"], start, **schedule)
     for group in critic_optimizer.param_groups:
-        group["lr"] = learning_rate(step, recipe["learning_rate"], 1, recipe["lr_half_life"], start)
+        group["lr"] = learning_rate(step, recipe["learning_rate"], 1, recipe["lr_half_life"], start, **schedule)
     optimizer.zero_grad(set_to_none=True)
     probability = teacher_probability(step, recipe["teacher_hold"], recipe["teacher_ramp"], recipe["teacher_final"])
     loss, metrics, auxiliary = system.objective(batch, probability, weights)
@@ -348,6 +455,8 @@ def validate(system, dataset, indices, device, weights=WEIGHTS, batch_size=8, fr
             _, metrics, _ = system.objective(batch, probability, weights, random_phase=False)
             totals[f"validation_{name}_mel"] += float(metrics["mel"]) * size
             totals[f"validation_{name}_stft"] += float(metrics["stft"]) * size
+            if "vocoder_input" in metrics:
+                totals[f"validation_{name}_vocoder_input"] += float(metrics["vocoder_input"]) * size
         for key in ("duration", "pause_accuracy", "pause_length_ratio", "pitch_error_semitones", "pitch_spread_ratio", "voicing_accuracy",
                     "duration_length_ratio", "duration_length_error"):
             totals["validation_" + key] += float(metrics[key]) * size
@@ -358,8 +467,8 @@ def validate(system, dataset, indices, device, weights=WEIGHTS, batch_size=8, fr
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--train", type=Path, required=True, help="Annotation manifest (train.jsonl)")
-    parser.add_argument("--validation", type=Path, required=True)
+    parser.add_argument("--train", type=Path, nargs="+", required=True, help="Annotation manifest(s) (train.jsonl); several are combined")
+    parser.add_argument("--validation", type=Path, nargs="+", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--config", type=Path)
     parser.add_argument("--device", default="cuda")
@@ -369,6 +478,11 @@ def main():
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--warmup", type=int, default=1000)
     parser.add_argument("--lr-half-life", type=float, default=100000)
+    parser.add_argument("--lr-schedule", choices=SCHEDULES, default="half_life",
+                        help="half_life: halve every --lr-half-life steps; cosine: decay to --lr-floor x the base rate at --steps")
+    parser.add_argument("--lr-floor", type=float, default=0.0, help="Cosine schedule: final rate as a fraction of the base rate")
+    parser.add_argument("--ema-decay", type=float, help="Keep an exponential moving average of the weights (e.g. 0.999) "
+                        "and export it as inference.pt; validation then measures the EMA weights")
     parser.add_argument("--grad-clip", type=float, default=10.0)
     parser.add_argument("--weights", type=json.loads, default={}, help="JSON overrides for the loss weights, e.g. '{\"mel\": 5}'")
     parser.add_argument("--gan-start", type=int, default=8000)
@@ -400,6 +514,10 @@ def main():
     parser.add_argument("--recorded-voicing", action="store_true", help="Use the pitch tracker's voicing as it is, "
                         "without marking vowel frames voiced")
     parser.add_argument("--no-preload", action="store_true", help="Load feature files lazily instead of before the first step")
+    parser.add_argument("--stream", action="store_true", help="Do not keep training features in memory: read each batch from disk, "
+                        "the next one in background threads (for corpora larger than RAM). The data seen is unchanged")
+    parser.add_argument("--throttle-file", type=Path, help='JSON {"sleep": seconds} re-read during training; that pause follows '
+                        "every step (see scripts/gpu_governor.py)")
     parser.add_argument("--validation-frames", type=int, help="Padded-frame budget per validation batch (default: --batch-frames)")
     parser.add_argument("--adapt-from", type=Path, help="Start a NEW custom-voice run from a trained checkpoint (last.pt or "
                         "inference.pt): speaker tables migrated by name, fresh optimizer, critics and step counter")
@@ -418,6 +536,8 @@ def main():
         parser.error("--init-from starts a new run; --resume continues one")
     if args.adapt_from and (args.init_from or args.resume):
         parser.error("--adapt-from starts a new adaptation run; resume it with --resume alone")
+    if not 0 <= args.lr_floor < 1 or (args.ema_decay is not None and not 0 < args.ema_decay < 1):
+        parser.error("--lr-floor must be in [0, 1) and --ema-decay in (0, 1)")
 
     # The budget file is re-read while training so a deliberate extension (or cut) takes effect.
     budget = {"deadline": math.inf, "checked": time.time()}
@@ -438,7 +558,7 @@ def main():
     torch.manual_seed(args.seed)
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
-    train = AnnotatedDataset(args.train, c, voiced_vowels=not args.recorded_voicing)
+    train = AnnotatedDataset(args.train, c, voiced_vowels=not args.recorded_voicing, cache=not args.stream)
     validation = AnnotatedDataset(args.validation, c, voiced_vowels=not args.recorded_voicing)
     check_leakage(train, validation)
     if train.annotation != validation.annotation:
@@ -448,13 +568,13 @@ def main():
     pool = balanced_indices(train, args.subset) if args.subset else list(range(len(train)))
     validation_indices = balanced_indices(validation, args.validation_size)
     validation_frames = args.validation_frames or args.batch_frames
-    if not args.no_preload:
+    if not args.no_preload and not args.stream:
         train.preload(pool)
         validation.preload(validation_indices)
     system, critics = TrainingSystem(c).to(args.device), Discriminators().to(args.device)
     count = sum(p.numel() for p in system.model.parameters())
-    if count > 5_000_000:
-        raise ValueError(f"inference parameter budget exceeded: {count:,}")
+    if count > c.max_parameters:
+        raise ValueError(f"inference parameter budget exceeded: {count:,} > {c.max_parameters:,} (config max_parameters)")
     adaptation = None
     trainable = list(system.parameters())
     if args.adapt_from:
@@ -495,27 +615,37 @@ def main():
     recipe["branched_from"] = None
     recipe["adaptation"] = adaptation
     recipe["validation_frames"] = validation_frames
+    recipe.update(schedule=args.lr_schedule, lr_floor=args.lr_floor, ema_decay=args.ema_decay)
+    # The cosine schedule ends at this run's final step, so the target is part of the recipe.
+    recipe["total_steps"] = args.steps if args.lr_schedule == "cosine" else None
     step = 0
 
-    def compatible(state, what, same_data=True):
+    def compatible(state, what, same_data=True, branch=False):
+        """Returns the configuration fields that differ (only possible when branching)."""
         if state.get("format_version") != CHECKPOINT_FORMAT:
             raise ValueError(f"checkpoint predates phoneme tokens and supervised durations (format < 4); it cannot be {what}")
         if same_data and (state["frontend"] != frontend_fingerprint(c.profile) or state["annotation"] != train.annotation):
             raise ValueError("checkpoint was trained with a different front end or annotation run "
                              "(branch with --init-from and --new-data to fine-tune on new annotations)")
-        if state["config"] != c.to_dict():
-            raise ValueError("checkpoint was trained with a different model configuration")
+        if state["config"] == c.to_dict():
+            return {}
+        if not branch:
+            raise ValueError("checkpoint was trained with a different model configuration (branch with --init-from)")
+        return c.branch_differences(Config.from_dict(state["config"]))
+    ema = EMA(system.model, args.ema_decay) if args.ema_decay is not None else None
     if args.resume:
         state = torch.load(args.resume, map_location=args.device, weights_only=True)
         compatible(state, "resumed")
         recipe["branched_from"] = state["recipe"].get("branched_from")
-        if state["datasets"] != fingerprints or state["recipe"] != recipe:
+        if state["datasets"] != fingerprints or {**RECIPE_DEFAULTS, **state["recipe"]} != {**RECIPE_DEFAULTS, **recipe}:
             raise ValueError("resume recipe or dataset mismatch (use --init-from to branch a new run with a changed recipe)")
         system.load_state_dict(state["system"])
         critics.load_state_dict(state["critics"])
         optimizer.load_state_dict(state["optimizer"])
         critic_optimizer.load_state_dict(state["critic_optimizer"])
         sampler.load_state(state["sampler"])
+        if ema is not None:
+            ema.load_state_dict(state["ema"])
         torch.set_rng_state(state["torch_rng"].cpu())
         if str(args.device).startswith("cuda") and state["cuda_rng"] is not None:
             torch.cuda.set_rng_state_all([x.cpu() for x in state["cuda_rng"]])
@@ -524,9 +654,10 @@ def main():
         state = torch.load(args.init_from, map_location=args.device, weights_only=True)
         # The symbol inventory is fixed (vocabulary size is part of the configuration),
         # so a checkpoint can be fine-tuned on another annotation run or front end.
-        compatible(state, "branched", same_data=not args.new_data)
+        differences = compatible(state, "branched", same_data=not args.new_data, branch=True)
         step = state["step"]
         loaded = load_compatible(system, state["system"])
+        loaded["config_changes"] = sorted(differences)
         # Critics that have already been trained are taken over, otherwise a branch
         # in the adversarial phase would hand full-strength gradients from untrained
         # critics to the generator. Optimizer moments are kept when no tensor changed.
@@ -540,6 +671,14 @@ def main():
         recipe["branched_from"] = {"step": step, "recipe": state["recipe"], "datasets": state["datasets"], "loaded": loaded}
         if args.new_data:
             recipe["branched_from"].update(frontend=state["frontend"], annotation=state["annotation"])
+        if ema is not None:
+            # A source EMA is taken over when every tensor was copied exactly; otherwise
+            # the average starts from the branched weights.
+            if state.get("ema") is not None and not loaded["grown"] and not loaded["new"] and not loaded["dropped"]:
+                ema.load_state_dict(state["ema"])
+                ema.decay = args.ema_decay
+            else:
+                ema = EMA(system.model, args.ema_decay)
     if step >= args.steps:
         raise ValueError("checkpoint already reached requested total steps")
     args.output.mkdir(parents=True, exist_ok=True)
@@ -556,13 +695,26 @@ def main():
         return {"format_version": CHECKPOINT_FORMAT, "config": c.to_dict(), "frontend": frontend_fingerprint(c.profile), "annotation": train.annotation,
                 "step": step, "datasets": fingerprints, "recipe": recipe, "system": system.state_dict(), "critics": critics.state_dict(),
                 "optimizer": optimizer.state_dict(), "critic_optimizer": critic_optimizer.state_dict(), "sampler": sampler.state(),
+                "ema": ema.state_dict() if ema is not None else None,
                 "torch_rng": torch.get_rng_state(), "cuda_rng": torch.cuda.get_rng_state_all() if str(args.device).startswith("cuda") else None}
     if step == args.gan_start and not args.resume:
         atomic_save(snapshot(), args.output / f"step-{step:08d}.pt")
     window, window_steps, window_start = defaultdict(float), 0, time.monotonic()
+    throttle = Throttle(args.throttle_file)
+    reader = ThreadPoolExecutor(4) if args.stream else None
+    ahead = None            # (indices, future) of the batch the sampler will hand out next
+
+    def load(indices):
+        return [train[pool[i]] for i in indices]
     while step < args.steps:
-        batch = collate([train[pool[i]] for i in sampler.next()], args.device)
+        indices = sampler.next()
+        items = ahead[1].result() if ahead is not None and ahead[0] == indices else load(indices)
+        upcoming = sampler.peek() if reader is not None else None
+        ahead = (upcoming, reader.submit(load, upcoming)) if upcoming is not None else None
+        batch = collate(items, args.device)
         metrics = optimize_step(system, critics, optimizer, critic_optimizer, batch, step, recipe, trainable)
+        if ema is not None:
+            ema.update(system.model)
         step += 1
         for key, value in metrics.items():
             window[key] += value
@@ -585,12 +737,21 @@ def main():
                               peak_reserved_gb=round(torch.cuda.max_memory_reserved() / 2**30, 3))
             if save:
                 validation_start = time.monotonic()
-                record.update(validate(system, validation, validation_indices, args.device, recipe["weights"], frame_budget=validation_frames))
+                provenance = {"adapted_from": {k: v for k, v in adaptation.items() if k != "tensors"}} if adaptation else None
+                if ema is None:
+                    record.update(validate(system, validation, validation_indices, args.device, recipe["weights"], frame_budget=validation_frames))
+                else:
+                    # Validation and the exported model use the averaged weights; training continues on the raw ones.
+                    with swapped_weights(system.model, ema.weights_for(system.model)):
+                        record.update(validate(system, validation, validation_indices, args.device, recipe["weights"], frame_budget=validation_frames))
+                        export_model(system.model, args.output / "inference.pt", step, train.annotation,
+                                     {**(provenance or {}), "ema": {"decay": ema.decay, "updates": ema.updates}})
+                    record["ema_updates"] = ema.updates
                 record["validation_seconds"] = round(time.monotonic() - validation_start, 2)
                 state = snapshot()
                 atomic_save(state, args.output / "last.pt")
-                provenance = {"adapted_from": {k: v for k, v in adaptation.items() if k != "tensors"}} if adaptation else None
-                export_model(system.model, args.output / "inference.pt", step, train.annotation, provenance)
+                if ema is None:
+                    export_model(system.model, args.output / "inference.pt", step, train.annotation, provenance)
                 if retain:
                     atomic_save(state, args.output / f"step-{step:08d}.pt")
             with (args.output / "metrics.jsonl").open("a") as stream:
@@ -599,6 +760,7 @@ def main():
             window, window_steps, window_start = defaultdict(float), 0, time.monotonic()
         if should_stop:
             break
+        window["throttle_seconds"] += throttle()
 
 
 if __name__ == "__main__":

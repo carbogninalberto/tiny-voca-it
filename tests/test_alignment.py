@@ -1,3 +1,4 @@
+from pathlib import Path
 import itertools
 import unittest
 import numpy as np
@@ -112,6 +113,25 @@ class AlignmentTests(unittest.TestCase):
         self.assertEqual(summary["vowel_to_voiceless"]["boundaries"], 3)
         self.assertAlmostEqual(summary["vowel_to_voiceless"]["flip_found"], 0.6667, places=3)
         self.assertEqual(summary["vowel_to_voiceless"]["within_1_frame"], 1.0)
+
+    def test_unpronounceable_texts_are_journalled_not_fatal(self):
+        import tempfile
+        from unittest.mock import patch
+        from tiny_voca.annotate import phonemize_texts, text_key
+        from tiny_voca.text import Phonemized
+
+        def fake(text, profile):
+            if text == "-":
+                raise ValueError("the text has nothing to pronounce")
+            return Phonemized(("<bos>", "<eos>"), (1, 2), (0, 0), ())
+        rows = [{"id": i, "text": t, "text_hash": text_key(t)} for i, t in (("a", "-"), ("b", "ciao"))]
+        with tempfile.TemporaryDirectory() as directory, patch("tiny_voca.annotate.phonemize", side_effect=fake):
+            cache = Path(directory) / "phonemes.jsonl"
+            known = phonemize_texts(rows, cache, log=lambda message: None)
+            self.assertIsNone(known[text_key("-")])
+            self.assertEqual(known[text_key("ciao")].ids, (1, 2))
+            again = phonemize_texts(rows, cache, log=lambda message: None)     # recovered from the journal
+            self.assertIsNone(again[text_key("-")])
 
     def test_quality_gate_names_every_reason(self):
         limits = {"max_weak_phone_fraction": 0.25, "min_token_probability": 0.5, "max_phone_frames": 70,

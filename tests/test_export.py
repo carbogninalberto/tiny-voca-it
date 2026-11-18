@@ -11,9 +11,13 @@ from tiny_voca.model import TinyVoca
 from tiny_voca.text import PHONE_IDS
 
 
-def small_model():
+def small_model(jitter=0.0, postfilter=0, head=0):
     torch.manual_seed(0)
-    model = TinyVoca(Config()).eval()
+    model = TinyVoca(Config(excitation_jitter=jitter, postfilter_channels=postfilter, head_channels=head)).eval()
+    if postfilter:   # a trained post-filter is not the identity
+        torch.nn.init.normal_(model.vocoder.postfilter.output.weight, std=0.05)
+    if head:
+        torch.nn.init.normal_(model.vocoder.head.output.weight, std=0.02)
     # A fresh model predicts arbitrary durations; pin them to a few frames per token.
     torch.nn.init.zeros_(model.duration.out.weight)
     model.duration.out.bias.data[:] = torch.tensor([1.5, 1.0])
@@ -30,38 +34,40 @@ def utterance(length=12):
 
 class ExportTest(unittest.TestCase):
     def test_rewrite_matches_synthesize(self):
-        model = small_model()
-        tokens, stress = utterance()
-        for voice in (0, 1):
-            reference, lengths, details = model.synthesize(tokens, stress, torch.tensor([tokens.shape[1]]), torch.tensor([voice]),
-                                                           speed=1.25, pitch_shift=0.1, pitch_range=1.3)
-            noise = torch.randn(int(lengths[0]), generator=torch.Generator().manual_seed(0))[None]
-            one = lambda value: torch.tensor([value])
-            with torch.no_grad():
-                audio, durations = Exportable(model, external_noise=True)(tokens, stress, torch.tensor([voice]), one(1.25), one(0.1), one(1.3), noise)
-            self.assertTrue(torch.equal(durations, details["durations"]))
-            self.assertEqual(audio.shape, reference.shape)
-            self.assertLess(float((audio - reference).abs().max()), 1e-2 * float(reference.abs().max()))
+        for jitter, postfilter, head in ((0.0, 0, 0), (0.04, 0, 0), (0.0, 8, 0), (0.0, 0, 16)):
+            model = small_model(jitter, postfilter, head)
+            tokens, stress = utterance()
+            for voice in (0, 1):
+                reference, lengths, details = model.synthesize(tokens, stress, torch.tensor([tokens.shape[1]]), torch.tensor([voice]),
+                                                               speed=1.25, pitch_shift=0.1, pitch_range=1.3)
+                noise = torch.randn(int(lengths[0]), generator=torch.Generator().manual_seed(0))[None]
+                one = lambda value: torch.tensor([value])
+                with torch.no_grad():
+                    audio, durations = Exportable(model, external_noise=True)(tokens, stress, torch.tensor([voice]), one(1.25), one(0.1), one(1.3), noise)
+                self.assertTrue(torch.equal(durations, details["durations"]))
+                self.assertEqual(audio.shape, reference.shape)
+                self.assertLess(float((audio - reference).abs().max()), 1e-2 * float(reference.abs().max()))
 
     def test_onnx_runs_at_other_lengths(self):
         try:
             import onnxruntime as ort
         except ImportError:
             self.skipTest("onnxruntime is not installed")
-        model = small_model()
-        with tempfile.TemporaryDirectory() as directory:
-            path = export(model, Path(directory) / "model.onnx", external_noise=True)
-            session = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
-            for length in (5, 40):
-                tokens, stress = utterance(length)
-                reference, lengths, _ = model.synthesize(tokens, stress, torch.tensor([length]), torch.tensor([1]))
-                noise = np.zeros((1, model.config.hop * model.config.max_frames), dtype=np.float32)
-                noise[0, :int(lengths[0])] = torch.randn(int(lengths[0]), generator=torch.Generator().manual_seed(0)).numpy()
-                one = lambda value: np.array([value], dtype=np.float32)
-                audio, _ = session.run(None, {"tokens": tokens.numpy(), "stress": stress.numpy(), "voice": np.array([1]),
-                                              "speed": one(1.0), "pitch_shift": one(0.0), "pitch_range": one(1.0), "noise": noise})
-                self.assertEqual(audio.shape, tuple(reference.shape))
-                self.assertLess(float(np.abs(audio - reference.numpy()).max()), 2e-2 * float(reference.abs().max()))
+        for jitter, postfilter, head in ((0.0, 0, 0), (0.04, 0, 0), (0.0, 8, 0), (0.0, 0, 16)):
+            model = small_model(jitter, postfilter, head)
+            with tempfile.TemporaryDirectory() as directory:
+                path = export(model, Path(directory) / "model.onnx", external_noise=True)
+                session = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+                for length in (5, 40):
+                    tokens, stress = utterance(length)
+                    reference, lengths, _ = model.synthesize(tokens, stress, torch.tensor([length]), torch.tensor([1]))
+                    noise = np.zeros((1, model.config.hop * model.config.max_frames), dtype=np.float32)
+                    noise[0, :int(lengths[0])] = torch.randn(int(lengths[0]), generator=torch.Generator().manual_seed(0)).numpy()
+                    one = lambda value: np.array([value], dtype=np.float32)
+                    audio, _ = session.run(None, {"tokens": tokens.numpy(), "stress": stress.numpy(), "voice": np.array([1]),
+                                                  "speed": one(1.0), "pitch_shift": one(0.0), "pitch_range": one(1.0), "noise": noise})
+                    self.assertEqual(audio.shape, tuple(reference.shape))
+                    self.assertLess(float(np.abs(audio - reference.numpy()).max()), 2e-2 * float(reference.abs().max()))
 
 
 if __name__ == "__main__":

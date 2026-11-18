@@ -47,42 +47,58 @@ def continuous_pitch(pitch, voiced, default=0.0, window=5, tolerance=0.45):
 
 
 class AnnotatedDataset:
+    """One annotation manifest, or several (a list): each is checked against its own
+    annotation run and acoustic root; the combination gets its own fingerprints."""
+
     def __init__(self, manifest, config, acoustic_root=None, cache=True, voiced_vowels=False):
-        self.manifest = Path(manifest)
-        metadata_path = self.manifest.parent / "annotations.json"
-        if not metadata_path.exists():
-            raise ValueError("not an annotation manifest (legacy byte-token manifests are stale): run tiny_voca.annotate")
-        metadata = json.loads(metadata_path.read_text())
-        if not metadata.get("complete"):
-            raise ValueError("annotation run is incomplete; finish it with --resume before training")
-        self.annotation = metadata["fingerprint"]
-        self.root = Path(acoustic_root or metadata["acoustic_root"])
-        self.fingerprint = hashlib.sha256(self.manifest.read_bytes()).hexdigest()
-        # Physical LF-delimited records: Unicode separators inside text are data.
-        self.rows = [json.loads(line) for line in self.manifest.read_text(encoding="utf-8").split("\n") if line.strip()]
+        manifests = [Path(m) for m in manifest] if isinstance(manifest, (list, tuple)) else [Path(manifest)]
+        if acoustic_root is not None and len(manifests) > 1:
+            raise ValueError("acoustic_root applies to a single manifest")
         self.config = config
-        if not self.rows:
-            raise ValueError("empty dataset")
         profile = config.profile
         frontend = frontend_fingerprint(profile)
         self.phone_ids, self.vowel_ids = profile.phone_ids, profile.vowel_ids
-        for row in self.rows:
-            if "durations" not in row or row.get("frontend") != frontend:
-                raise ValueError("tokens were produced by a different front end; re-run annotation")
-            if row.get("acoustic") != config.acoustic_fingerprint:
-                raise ValueError("acoustic feature settings differ from this configuration")
-            if row.get("annotation") != self.annotation:
-                raise ValueError("manifest rows come from a different annotation run")
-            if len(row["tokens"]) != len(row["durations"]) or len(row["tokens"]) != len(row["stress"]):
-                raise ValueError(f"token/duration length mismatch: {row['id']}")
-            if sum(row["durations"]) != row["frames"] or min(row["durations"]) < 0:
-                raise ValueError(f"durations do not cover the frames exactly: {row['id']}")
-            if any(d < 1 for t, d in zip(row["tokens"], row["durations"]) if t in self.phone_ids):
-                raise ValueError(f"phoneme without frames: {row['id']}")
-            if not 0 < len(row["tokens"]) <= config.max_tokens or not 0 < row["frames"] <= config.max_frames:
-                raise ValueError(f"utterance exceeds model limits: {row['id']}")
-            if max(row["tokens"]) >= config.vocab_size or min(row["tokens"]) < 1 or row["speaker"] not in config.speakers:
-                raise ValueError(f"invalid token or speaker: {row['id']}")
+        self.rows, self.row_roots, annotations, fingerprints = [], [], [], []
+        for path in manifests:
+            metadata_path = path.parent / "annotations.json"
+            if not metadata_path.exists():
+                raise ValueError("not an annotation manifest (legacy byte-token manifests are stale): run tiny_voca.annotate")
+            metadata = json.loads(metadata_path.read_text())
+            if not metadata.get("complete"):
+                raise ValueError("annotation run is incomplete; finish it with --resume before training")
+            annotation = metadata["fingerprint"]
+            root = Path(acoustic_root or metadata["acoustic_root"])
+            fingerprints.append(hashlib.sha256(path.read_bytes()).hexdigest())
+            annotations.append(annotation)
+            # Physical LF-delimited records: Unicode separators inside text are data.
+            rows = [json.loads(line) for line in path.read_text(encoding="utf-8").split("\n") if line.strip()]
+            for row in rows:
+                if "durations" not in row or row.get("frontend") != frontend:
+                    raise ValueError("tokens were produced by a different front end; re-run annotation")
+                if row.get("acoustic") != config.acoustic_fingerprint:
+                    raise ValueError("acoustic feature settings differ from this configuration")
+                if row.get("annotation") != annotation:
+                    raise ValueError("manifest rows come from a different annotation run")
+                if len(row["tokens"]) != len(row["durations"]) or len(row["tokens"]) != len(row["stress"]):
+                    raise ValueError(f"token/duration length mismatch: {row['id']}")
+                if sum(row["durations"]) != row["frames"] or min(row["durations"]) < 0:
+                    raise ValueError(f"durations do not cover the frames exactly: {row['id']}")
+                if any(d < 1 for t, d in zip(row["tokens"], row["durations"]) if t in self.phone_ids):
+                    raise ValueError(f"phoneme without frames: {row['id']}")
+                if not 0 < len(row["tokens"]) <= config.max_tokens or not 0 < row["frames"] <= config.max_frames:
+                    raise ValueError(f"utterance exceeds model limits: {row['id']}")
+                if max(row["tokens"]) >= config.vocab_size or min(row["tokens"]) < 1 or row["speaker"] not in config.speakers:
+                    raise ValueError(f"invalid token or speaker: {row['id']}")
+                if config.emotions and row.get("emotion", config.emotions[0]) not in config.emotions:
+                    raise ValueError(f"unknown emotion {row.get('emotion')!r}: {row['id']}")
+            self.rows += rows
+            self.row_roots += [root] * len(rows)
+        self.manifest = manifests[0]
+        self.root = self.row_roots[0] if self.row_roots else None
+        combine = lambda values: values[0] if len(values) == 1 else hashlib.sha256(json.dumps(values).encode()).hexdigest()
+        self.annotation, self.fingerprint = combine(annotations), combine(fingerprints)
+        if not self.rows:
+            raise ValueError("empty dataset")
         ids = [r["id"] for r in self.rows]
         if len(ids) != len(set(ids)):
             raise ValueError("duplicate IDs in manifest")
@@ -103,9 +119,9 @@ class AnnotatedDataset:
     def __getitem__(self, index):
         if self._cache is not None and index in self._cache:
             return self._cache[index]
-        row, c = self.rows[index], self.config
-        path = (self.root / row["path"]).resolve()
-        if not path.is_relative_to(self.root.resolve()):
+        row, c, root = self.rows[index], self.config, self.row_roots[index]
+        path = (root / row["path"]).resolve()
+        if not path.is_relative_to(root.resolve()):
             raise ValueError("feature file escapes the acoustic root")
         stored = torch.load(path, map_location="cpu", weights_only=True)
         t = row["frames"]
@@ -130,6 +146,10 @@ class AnnotatedDataset:
             "prosody": torch.stack((pitch, voiced, (stored["prosody"][:, 2] - c.energy_mean) / c.energy_scale), dim=-1),
             "pitch_trusted": trusted,
         }
+        if c.emotions:
+            # Rows without a label (all recorded corpora) are neutral at zero intensity.
+            item["emotion"] = c.emotions.index(row.get("emotion", c.emotions[0]))
+            item["intensity"] = float(row.get("intensity", 0.0))
         if self._cache is not None:
             self._cache[index] = item
         return item
@@ -141,6 +161,9 @@ def collate(items, device="cpu"):
     batch["token_lengths"] = torch.tensor([x["tokens"].numel() for x in items], device=device)
     batch["frame_lengths"] = torch.tensor([x["mel"].shape[0] for x in items], device=device)
     batch["speakers"] = torch.tensor([x["speaker"] for x in items], device=device)
+    if "emotion" in items[0]:
+        batch["emotions"] = torch.tensor([x["emotion"] for x in items], device=device)
+        batch["intensities"] = torch.tensor([x["intensity"] for x in items], device=device, dtype=torch.float32)
     return batch
 
 
@@ -168,6 +191,10 @@ class BucketSampler:
             batches.append(current)
             self.pending = [batches[i] for i in torch.randperm(len(batches), generator=self.generator).tolist()]
         return self.pending.pop()
+
+    def peek(self):
+        """The batch ``next`` will return, if it is already drawn (no random state is used)."""
+        return list(self.pending[-1]) if self.pending else None
 
     def state(self):
         return {"generator": self.generator.get_state(), "pending": [list(b) for b in self.pending]}

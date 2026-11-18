@@ -31,7 +31,7 @@ import soundfile as sf
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from tiny_voca.dataset_import import (assign_splits, audio_hash, check_audio, connected_groups,  # noqa: E402
-                                      split_report)
+                                      keep_held_out, split_report)
 from tiny_voca.journal import atomic_json, file_hash  # noqa: E402
 
 COLUMNS = ("text", "speaker_id", "duration", "levenshtein")
@@ -83,6 +83,10 @@ def main():
     parser.add_argument("--seed", type=int, default=20261115)
     parser.add_argument("--section-size", type=int, default=100,
                         help="Consecutive clip numbers per split group inside a book (approximates a chapter/session)")
+    parser.add_argument("--keep-splits", type=Path,
+                        help="Earlier import of the same speaker: its validation and test clips stay exactly as they were "
+                             "(the test manifest must come out byte-identical), new clips of their groups are dropped, "
+                             "everything else is training data")
     args = parser.parse_args()
     import pyarrow.parquet as pq
 
@@ -91,6 +95,19 @@ def main():
         raise SystemExit("no parquet shards found")
     settings = {k: getattr(args, k) for k in ("speaker", "voice", "min_levenshtein", "max_seconds", "min_seconds", "max_hours", "seed",
                                               "section_size")}
+    kept = None
+    if args.keep_splits:
+        earlier = json.loads((args.keep_splits / "receipt.json").read_text())
+        if {k: v for k, v in earlier["settings"].items() if k not in ("max_hours", "keep_splits")} != \
+                {k: v for k, v in settings.items() if k != "max_hours"}:
+            raise SystemExit("--keep-splits: the earlier import used other filters, voice, seed or grouping")
+        kept = {}
+        for split in ("validation", "test"):
+            for line in (args.keep_splits / f"{split}.jsonl").read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    kept[json.loads(line)["id"]] = split
+        settings["keep_splits"] = {"source": str(args.keep_splits), "test_manifest_sha256": earlier["test_manifest_sha256"],
+                                   "validation_manifest_sha256": file_hash(args.keep_splits / "validation.jsonl")}
     receipt_path = args.output / "receipt.json"
     if receipt_path.exists() and json.loads(receipt_path.read_text())["settings"] != settings:
         raise SystemExit("output exists with different settings; use a new directory")
@@ -160,7 +177,14 @@ def main():
 
     # 3. Duplicate groups and deterministic splits.
     groups = connected_groups(records)
-    splits = assign_splits(records, groups, args.seed)
+    if kept is None:
+        splits = assign_splits(records, groups, args.seed)
+    else:
+        splits = keep_held_out(records, groups, kept)
+        dropped = [r for r in records if splits[r["id"]] is None]
+        rejected.extend({"id": r["id"], "source": r["source"], "seconds": r["seconds"], "reasons": ["held_out_group_extension"]}
+                        for r in dropped)
+        records = [r for r in records if splits[r["id"]] is not None]
     leaked = Counter()
     for split in ("train", "validation", "test"):
         rows = sorted((r for r in records if splits[r["id"]] == split), key=lambda r: r["id"])
@@ -170,6 +194,13 @@ def main():
                                       "split": split, "text_id": groups[r["id"]], "origin": "cml-tts-italian",
                                       "source_id": r["source"], "source_license": LICENSE, "source_url": SOURCE_URL},
                                      ensure_ascii=False) + "\n" for r in rows)
+        if kept is not None and split != "train":
+            # Same clips as before, written verbatim: a group key (text_id) may have been
+            # renamed by new clips that joined the group and were then dropped.
+            earlier_text = (args.keep_splits / f"{split}.jsonl").read_text(encoding="utf-8")
+            if {json.loads(line)["id"] for line in earlier_text.splitlines() if line.strip()} != {r["id"] for r in rows}:
+                raise RuntimeError(f"the {split} clips differ from the earlier import")
+            payload = earlier_text
         (args.output / f"{split}.jsonl").write_text(payload, encoding="utf-8")
     per_group = Counter(group for group, _ in leaked)
     if any(count > 1 for count in per_group.values()):
@@ -189,6 +220,10 @@ def main():
         "splits": report, "rejections": dict(Counter(reason.split(":")[0] for r in rejected for reason in r["reasons"])),
         "test_manifest_sha256": file_hash(args.output / "test.jsonl"),
     }
+    if kept is not None:
+        for split in ("validation", "test"):
+            if file_hash(args.output / f"{split}.jsonl") != settings["keep_splits"][f"{split}_manifest_sha256"]:
+                raise RuntimeError(f"the {split} manifest changed although --keep-splits was given")
     atomic_json(receipt_path, receipt)
     print(json.dumps({"splits": report, "rejections": receipt["rejections"], "groups": receipt["groups"]["count"]}, indent=1))
 

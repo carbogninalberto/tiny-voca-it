@@ -30,6 +30,30 @@ def mel_filterbank(sample_rate, fft, n_mels):
     return weights.float()
 
 
+class VocosMel(nn.Module):
+    """The log-mel spectrogram the Vocos 24 kHz vocoder reads (charactr/vocos-mel-24khz:
+    torchaudio MelSpectrogram, n_fft 1024, hop 256, HTK mel scale without area
+    normalisation, magnitude, centred with reflection, natural log floored at 1e-7).
+    Returns [B, frames, bands]; frames = samples // hop + 1."""
+
+    def __init__(self, sample_rate=24000, fft=1024, hop=256, bands=100):
+        super().__init__()
+        self.fft, self.hop = fft, hop
+        to_mel = lambda hz: 2595.0 * torch.log10(1.0 + hz / 700.0)
+        to_hz = lambda mel: 700.0 * (10.0 ** (mel / 2595.0) - 1.0)
+        frequencies = torch.linspace(0, sample_rate / 2, fft // 2 + 1, dtype=torch.float64)
+        points = to_hz(torch.linspace(to_mel(torch.tensor(0.0, dtype=torch.float64)), to_mel(torch.tensor(sample_rate / 2, dtype=torch.float64)), bands + 2))
+        widths = points[1:] - points[:-1]
+        slopes = points[None, :] - frequencies[:, None]
+        down, up = -slopes[:, :-2] / widths[:-1], slopes[:, 2:] / widths[1:]
+        self.register_buffer("filters", torch.clamp(torch.minimum(down, up), min=0).T.float().contiguous(), persistent=False)
+        self.register_buffer("window", torch.hann_window(fft), persistent=False)
+
+    def forward(self, wave):
+        spectrum = torch.stft(wave.float(), self.fft, self.hop, window=self.window, center=True, pad_mode="reflect", return_complex=True).abs()
+        return torch.log((self.filters @ spectrum).clamp_min(1e-7)).transpose(1, 2)
+
+
 class SpectralLoss(nn.Module):
     """Multi-resolution STFT and log-mel distances over whole utterances.
 

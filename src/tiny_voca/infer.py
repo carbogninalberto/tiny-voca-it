@@ -51,7 +51,7 @@ def match_frontend(path):
     return None
 
 
-def speak(model, text, voice, speed=1.0, pitch_shift=0.0, seed=0, pitch_range=1.0):
+def speak(model, text, voice, speed=1.0, pitch_shift=0.0, seed=0, pitch_range=1.0, emotion=None, intensity=0.0):
     """Text -> (float waveform tensor, phonemized text). Same front end as training."""
     device = next(model.parameters()).device
     phones = phonemize(text, model.config.profile)
@@ -64,7 +64,16 @@ def speak(model, text, voice, speed=1.0, pitch_shift=0.0, seed=0, pitch_range=1.
     if voice not in model.config.speakers:
         raise ValueError(f"unknown voice {voice!r}; this checkpoint has {list(model.config.speakers)}")
     speaker = torch.tensor([model.config.speakers.index(voice)], device=device)
-    audio, lengths, details = model.synthesize(tokens, stress, torch.tensor([len(phones)], device=device), speaker, speed, pitch_shift, seed, pitch_range)
+    emotions = intensities = None
+    if emotion is not None and model.config.emotions:
+        if emotion not in model.config.emotions:
+            raise ValueError(f"unknown emotion {emotion!r}; this checkpoint has {list(model.config.emotions)}")
+        if not 0.0 <= intensity <= 1.5:
+            raise ValueError("intensity must be between 0 and 1.5")
+        emotions = torch.tensor([model.config.emotions.index(emotion)], device=device)
+        intensities = torch.tensor([float(intensity)], device=device)
+    audio, lengths, details = model.synthesize(tokens, stress, torch.tensor([len(phones)], device=device), speaker, speed, pitch_shift, seed,
+                                               pitch_range, emotions=emotions, intensities=intensities)
     if not torch.isfinite(audio).all():
         raise RuntimeError("model produced non-finite audio")
     return audio[0, :int(lengths[0])].cpu(), phones, details

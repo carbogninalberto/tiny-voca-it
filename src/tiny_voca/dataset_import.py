@@ -115,6 +115,27 @@ def assign_splits(records, groups, seed, fractions=(("test", 0.05), ("validation
     return {record["id"]: assignment[groups[record["id"]]] for record in records}
 
 
+def keep_held_out(records, groups, kept):
+    """Splits that keep an earlier import's held-out clips exactly.
+
+    A clip listed as validation/test before keeps that split. A new clip that
+    shares a group (book section, transcript or audio) with a held-out clip is
+    dropped (``None``): it can join neither the held-out set, which must stay
+    identical, nor training, which would leak. Everything else is training.
+    A held-out clip that is missing now is an error.
+    """
+    missing = sorted(set(kept) - {r["id"] for r in records})
+    if missing:
+        raise ValueError(f"held-out clips of the earlier import are missing now: {missing[:5]}")
+    held = {}
+    for record in records:
+        if record["id"] in kept:
+            group = groups[record["id"]]
+            if held.setdefault(group, kept[record["id"]]) != kept[record["id"]]:
+                raise ValueError("a group now joins validation and test clips; the earlier split cannot be kept")
+    return {r["id"]: kept.get(r["id"], None if groups[r["id"]] in held else "train") for r in records}
+
+
 def split_report(records, splits, sample_rate=24000):
     report = {}
     for split in ("train", "validation", "test"):

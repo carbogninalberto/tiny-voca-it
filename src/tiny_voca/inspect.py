@@ -25,7 +25,8 @@ def parameter_report(config):
                      "waveform discriminators": sum(p.numel() for p in Discriminators().parameters())}
     return {"inference_parts": parts, "inference_parameters": inference, "training_only_parts": training_only,
             "fp32_weight_MB": round(inference * 4 / 1e6, 3), "fp16_weight_MB": round(inference * 2 / 1e6, 3),
-            "under_5M": inference < 5_000_000}
+            "under_5M": inference < 5_000_000, "budget": config.max_parameters,
+            "within_budget": inference <= config.max_parameters}
 
 
 def main():
