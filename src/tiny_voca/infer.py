@@ -83,15 +83,17 @@ def vocode(model, wave, details, checkpoint, voice=None):
     """Render the final audio with the neural vocoder: the Vocos log-mel of the
     source-filter waveform, plus (for a prior vocoder) the model's pitch and voicing."""
     from .losses import VocosMel
-    from .vocoder import load_vocoder
-    vocoder = load_vocoder(checkpoint)
+    from .vocoder import Vocoder, load_vocoder
+    # ``checkpoint`` may be a path or an already loaded Vocoder (streaming reuses one).
+    vocoder = checkpoint if isinstance(checkpoint, Vocoder) else load_vocoder(checkpoint)
+    device = next(vocoder.parameters()).device
     frames = wave.shape[-1] // model.config.hop
     with torch.no_grad():
-        mel = VocosMel()(wave[None, :frames * model.config.hop].float()).transpose(1, 2)
+        mel = VocosMel().to(device)(wave[None, :frames * model.config.hop].float().to(device)).transpose(1, 2)
         if not vocoder.config.prior:
             return vocoder(mel)[0]
-        prosody = details["prosody"][0, :frames].cpu()
-        return vocoder(mel, model.frequency(prosody[:, 0])[None].float(), (prosody[:, 1] > 0).float()[None], voice=voice)[0]
+        prosody = details["prosody"][0, :frames].to(device)
+        return vocoder(mel, model.frequency(prosody[:, 0])[None].float(), (prosody[:, 1] > 0).float()[None], voice=voice)[0].cpu()
 
 
 def main():
