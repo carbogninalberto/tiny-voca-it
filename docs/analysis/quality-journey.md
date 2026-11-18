@@ -1001,3 +1001,24 @@ From now on decisions are made and recorded here, without waiting for approval.
 - **Display names:** EM4 is shown as **Lorenzo** and EF4 as **Chiara** on the page,
   the playground and in the README. The internal speaker IDs stay EM4/EF4, so the
   running, resumable data stages are not disturbed.
+- **Emotion texts v2:** 150 per emotion and 105 neutral (the old 30 per emotion
+  plus 120 new). The new sentences are emotion-congruent, 7–22 words, no digits,
+  and checked against duplicates. Copy: `docs/data/emotion-texts-v2.json`.
+- **Emotion baseline** (`scripts/evaluate_emotion.py`): voice-two 115k on EF3,
+  6 sentences per emotion, measured relative to neutral. Columns: pitch shift
+  (semitones) / range change / rate ratio.
+
+  | emotion | data | model |
+  |---|---|---|
+  | joy | +13.7 / +4.8 / 0.84 | +10.2 / +4.9 / 0.94 |
+  | sadness | +5.1 / −1.4 / 0.76 | −0.1 / +0.2 / 0.91 |
+  | anger | +14.8 / +3.1 / 1.06 | +11.1 / +3.4 / 1.02 |
+  | fear | +5.4 / +0.2 / 0.94 | +5.0 / +3.0 / 0.95 |
+  | surprise | +6.1 / +3.8 / 0.84 | +6.1 / +5.1 / 0.86 |
+  | disgust | +5.0 / +1.0 / 0.80 | +0.7 / +1.5 / 0.94 |
+
+  - The pitch shifts of joy, anger and surprise come through.
+  - Sadness and disgust barely move.
+  - Tempo changes (sad and disgusted speech is slower) and loudness changes are
+    mostly lost.
+  - This is the target for round 8.

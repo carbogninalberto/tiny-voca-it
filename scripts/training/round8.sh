@@ -42,3 +42,57 @@ if ! grep -q 'EMOTION4-GEN-DONE' logs/emotion4-gen.log 2>/dev/null; then
 fi
 log "emotion4 generation done"
 echo "stages 3-5 are appended once the texts and filter are ready" >> logs/round8.log
+
+# 3. voice-similarity filter + splits for the emotion set, then features and alignment for all three sets.
+if ! grep -q 'ROUND8-PREP-DONE' logs/round8-prep.log 2>/dev/null; then
+  log "round 8 prep: start"
+  ( set -e
+    .venv/bin/python scripts/filter_speaker.py --root data/emotion4-synth --references data/voice-refs \
+      --split-train $TRAIN_TEXTS data/em4-synth/train.jsonl data/ef4-synth/train.jsonl \
+      --split-validation $VAL_TEXTS data/em4-synth/validation.jsonl data/em4-synth/test.jsonl data/ef4-synth/validation.jsonl data/ef4-synth/test.jsonl
+    for set in em4 ef4 emotion4; do
+      for s in validation test train; do
+        [ -s data/$set-synth/$s.jsonl ] || continue
+        .venv/bin/python -m tiny_voca.prepare --inputs data/$set-synth/$s.jsonl --split $s --output data/$set-features \
+          --config configs/italian-voice-emotion.json --workers 10 --resume
+      done
+      .venv/bin/python -m tiny_voca.annotate --features data/$set-features --output data/$set-annotations \
+        --dataset-revision qwen3-$set-20261119 --config configs/italian-voice-emotion.json --device cuda --resume
+    done
+    # Emotion clips three times per epoch (oversampling: they are a small share of the hours).
+    for k in 1 2 3; do cat data/emotion4-annotations/train.jsonl; done > data/emotion4-annotations/train-x3.jsonl
+    echo ROUND8-PREP-DONE ) >> logs/round8-prep.log 2>&1
+  grep -q 'ROUND8-PREP-DONE' logs/round8-prep.log || { log "round 8 prep failed"; exit 1; }
+fi
+log "round 8 prep done"
+
+# 4. voice fine-tune: new voices + emotions (oversampled) + IT1 and the earlier emotion voices for stability.
+if ! grep -q 'voice-four done' logs/round8.log; then
+  START=(--init-from runs/voice-two/step-00115000.pt --new-data); [ -f runs/voice-four/last.pt ] && START=(--resume)
+  log "voice-four: start (${START[*]})"; G=$(governor logs/voice-four.throttle.json)
+  PYTHONPATH=$LIB/pylib .venv/bin/python -m tiny_voca.train "${START[@]}" \
+    --train data/em4-annotations/train.jsonl data/ef4-annotations/train.jsonl data/emotion4-annotations/train-x3.jsonl \
+            data/it-multi6-annotations/train-it1.jsonl data/emotion-annotations/train-no-ef3-neutral.jsonl \
+    --validation data/em4-annotations/validation.jsonl data/ef4-annotations/validation.jsonl data/emotion4-annotations/validation.jsonl \
+    --validation-size 96 --output runs/voice-four --config configs/italian-voice-emotion.json --steps 135000 --batch-frames 9000 --max-batch 32 \
+    --learning-rate 1e-4 --warmup 300 --gan-start 0 --gan-ramp 1000 --gan-ratio 0.7 --teacher-hold 0 --teacher-ramp 1 --teacher-final 0 \
+    --weights '{"pitch_spread": 4.0}' --pitch-delta 10 --lr-schedule cosine --ema-decay 0.999 --stream \
+    --throttle-file logs/voice-four.throttle.json --save-every 1000 --keep-every 1000 --max-seconds 172800 >> logs/voice-four.log 2>&1
+  kill $G 2>/dev/null
+  [ -f runs/voice-four/inference.pt ] || { log "voice-four failed"; exit 1; }
+  log "voice-four done"
+fi
+
+# 5. vocoder fine-tune on the new voices (pulse share drawn from [0, 0.1], per-voice setting chosen afterwards).
+if ! grep -q '"done"' logs/vocoder-four.log 2>/dev/null; then
+  START=(--init-from runs/vocoder-three/last.pt --fresh-schedule); [ -f runs/vocoder-four/last.pt ] && START=(--resume)
+  log "vocoder-four: start"; G=$(governor logs/vocoder-four.throttle.json)
+  PYTHONPATH=$LIB/pylib .venv/bin/python -m tiny_voca.train_vocoder "${START[@]}" --prior --prior-high-hz 2500 --prior-high-gain 0.05 \
+    --prior-gain-range 0.0 0.1 --manifests data/em4-features/train.jsonl data/ef4-features/train.jsonl data/emotion4-features/train.jsonl \
+    data/it-multi-features/train-it1.jsonl --validation data/em4-features/validation.jsonl --output runs/vocoder-four --steps 225000 --batch 64 \
+    --learning-rate 5e-5 --warmup 300 --mel-weight 15 --teacher vocos --distill-mode spectrum --distill-weight 4 \
+    --save-every 1000 --keep-every 5000 --throttle-file logs/vocoder-four.throttle.json >> logs/vocoder-four.log 2>&1
+  kill $G 2>/dev/null
+  grep -q '"done"' logs/vocoder-four.log || { log "vocoder-four failed"; exit 1; }
+fi
+log "round 8 done"
