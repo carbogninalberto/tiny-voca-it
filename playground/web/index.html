@@ -3,149 +3,330 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>tiny-voca italiano</title>
-<meta name="description" content="tiny-voca: a 4.5M-parameter Italian text-to-speech model trained from scratch, running entirely in your browser.">
+<title>tiny-voca-it · Italian TTS in 6.8M parameters</title>
+<meta name="description" content="A 6.8M-parameter Italian text-to-speech model that runs entirely in your browser.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #f6f4ef; --panel: #ffffff; --ink: #1d1b18; --muted: #6b665d; --line: #e3ded3;
-    --accent: #0b7a5a; --accent-ink: #ffffff; --accent-soft: #e2f2ec; --warn: #b3261e; --chip: #efebe2;
-    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-    color-scheme: light;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg: #151513; --panel: #1f1f1c; --ink: #ecebe6; --muted: #a29e94; --line: #34332e;
-            --accent: #3fbf93; --accent-ink: #0d1a15; --accent-soft: #1d3129; --warn: #f2948c; --chip: #2a2925;
-            color-scheme: dark; }
+    --bg: #0b0b0f; --card: #131318; --card-2: #17171e; --line: #ffffff17; --line-2: #ffffff24;
+    --ink: #f5f5f5; --muted: #9b9ba6; --dim: #6b6b76;
+    --p50: #ededfc; --p200: #b0a6f5; --p300: #8b7bf0; --p400: #6650eb; --p500: #4b38d9; --p600: #361dc2;
+    --good: #34d399; --warn: #fbbf24;
+    --radius: 10px; --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --ease: cubic-bezier(.4, 0, .2, 1);
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  main { max-width: 980px; margin: 0 auto; padding: 28px 18px 60px; }
-  header { margin-bottom: 18px; }
-  h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
-  h1 span { color: var(--accent); }
-  .lede { color: var(--muted); font-size: 14px; margin: 4px 0 0; max-width: 70ch; }
-  .lede a, .about a { color: var(--accent); }
-  .grid { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 16px; }
-  @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
-  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
-  label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 6px; }
-  textarea { width: 100%; min-height: 150px; resize: vertical; border: 1px solid var(--line); border-radius: 10px; padding: 12px;
-             font: 17px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--ink); }
-  textarea:focus, select:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; }
-  .chip { border: 0; background: var(--chip); color: var(--ink); border-radius: 999px; padding: 4px 10px; font-size: 12.5px; cursor: pointer; }
-  .chip:hover { background: var(--accent-soft); }
-  .row { display: flex; gap: 10px; align-items: center; margin-top: 14px; flex-wrap: wrap; }
-  .speak { background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 10px; padding: 10px 22px; font-size: 15px; font-weight: 600; cursor: pointer; }
-  .speak[disabled] { opacity: .55; cursor: progress; }
-  .hint { color: var(--muted); font-size: 12.5px; }
-  select { width: 100%; padding: 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); font: inherit; }
-  .control { margin-bottom: 14px; }
-  .control output { float: right; font-family: var(--mono); font-size: 12px; color: var(--ink); text-transform: none; }
-  input[type=range] { width: 100%; accent-color: var(--accent); }
-  .reset { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 8px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
-  .status { margin-top: 12px; font-size: 13px; color: var(--muted); }
-  .bar { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; margin-top: 6px; }
-  .bar div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
-  .error { color: var(--warn); font-size: 14px; margin-top: 10px; }
-  .history { margin-top: 16px; display: flex; flex-direction: column; gap: 10px; }
-  .take { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
-  .take .text { font-size: 15px; margin-bottom: 8px; }
-  .take audio { width: 100%; height: 36px; }
-  .take .facts { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 6px; }
-  .take details { margin-top: 6px; }
-  .take summary { font-size: 12px; color: var(--muted); cursor: pointer; }
-  .take pre { font-family: var(--mono); font-size: 12px; white-space: pre-wrap; word-break: break-word; margin: 6px 0 0; color: var(--ink); }
-  .take a { color: var(--accent); }
-  .empty { color: var(--muted); font-size: 14px; padding: 20px; text-align: center; border: 1px dashed var(--line); border-radius: 12px; }
-  .about { margin-top: 28px; font-size: 13.5px; color: var(--muted); }
-  .about h2 { font-size: 14px; color: var(--ink); margin: 18px 0 4px; }
-  .about ul { margin: 4px 0; padding-left: 20px; }
-  kbd { font-family: var(--mono); font-size: 11px; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+  [hidden] { display: none !important; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.625 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+         -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+  a { color: var(--p200); text-decoration: none; } a:hover { color: var(--p50); }
+  code, kbd, pre { font-family: var(--mono); font-size: .86em; }
+  code { background: #ffffff0d; border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; }
+
+  /* backdrop: grid fading out from the top, a violet glow, film noise */
+  .backdrop { position: fixed; inset: 0; z-index: -1; pointer-events: none;
+    background: linear-gradient(90deg, #ffffff0a 1px, #0000 1px), linear-gradient(#ffffff0a 1px, #0000 1px); background-size: 56px 56px;
+    -webkit-mask-image: radial-gradient(80% 60% at 50% 0, #000 40%, #0000 100%); mask-image: radial-gradient(80% 60% at 50% 0, #000 40%, #0000 100%); }
+  .glow { position: absolute; z-index: -1; left: 50%; top: -240px; width: 900px; height: 520px; transform: translateX(-50%); pointer-events: none;
+    background: radial-gradient(closest-side, #4b38d955, #0000); filter: blur(30px); }
+  body::after { content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 50; opacity: .05;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+
+  nav { position: sticky; top: 0; z-index: 20; backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+        background: #0b0b0fcc; border-bottom: 1px solid var(--line); }
+  nav .in { max-width: 1080px; margin: 0 auto; padding: 12px 20px; display: flex; align-items: center; gap: 22px; }
+  nav .brand { font-weight: 700; letter-spacing: -.02em; color: var(--ink); display: flex; align-items: center; gap: 8px; }
+  nav .brand i { width: 9px; height: 9px; border-radius: 50%; background: var(--p400); box-shadow: 0 0 12px var(--p400); }
+  nav .links { display: flex; gap: 18px; margin-left: auto; font-size: 13.5px; }
+  nav .links a { color: var(--muted); } nav .links a:hover { color: var(--ink); }
+  @media (max-width: 760px) { nav .links a:not(.gh) { display: none; } }
+
+  main { max-width: 1080px; margin: 0 auto; padding: 0 20px 80px; position: relative; }
+  section { padding-top: 88px; scroll-margin-top: 40px; }
+  .eyebrow { font: 500 12px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--p300); }
+  h2 { margin: 12px 0 10px; font-size: clamp(28px, 4vw, 38px); line-height: 1.15; font-weight: 700; letter-spacing: -.025em; }
+  .sub { color: var(--muted); max-width: 680px; margin: 0 0 28px; }
+
+  /* hero */
+  .hero { padding-top: 96px; text-align: center; }
+  .pill { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line-2); background: #ffffff08; border-radius: 999px;
+          padding: 5px 12px 5px 6px; font-size: 12.5px; color: var(--muted); }
+  .pill b { background: var(--p400); color: #fff; border-radius: 999px; padding: 1px 8px; font-weight: 600; font-size: 11.5px; }
+  h1 { margin: 24px auto 0; max-width: 880px; font-size: clamp(42px, 7.5vw, 76px); line-height: 1.04; font-weight: 800; letter-spacing: -.035em; text-wrap: balance; }
+  .shimmer { background: linear-gradient(110deg, #f5f5f5 20%, var(--p300) 45%, var(--p400) 55%, #f5f5f5 80%); background-size: 250% 100%;
+             -webkit-background-clip: text; background-clip: text; color: transparent; animation: shimmer 7s linear infinite; }
+  @keyframes shimmer { from { background-position: 100% 0; } to { background-position: -150% 0; } }
+  .lede { max-width: 640px; margin: 20px auto 0; color: var(--muted); font-size: 17px; }
+  .cta { display: flex; gap: 12px; justify-content: center; margin-top: 30px; flex-wrap: wrap; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; border-radius: var(--radius); padding: 10px 18px; font: 600 14px Inter, sans-serif;
+         border: 1px solid var(--line-2); background: #ffffff0a; color: var(--ink); cursor: pointer; transition: all .15s var(--ease); }
+  .btn:hover { background: #ffffff14; color: var(--ink); }
+  .btn.primary { background: var(--p400); border-color: #8b7bf066; color: #fff; box-shadow: 0 0 0 1px #6650eb33, 0 8px 30px -8px #6650eb99; }
+  .btn.primary:hover { background: var(--p500); }
+  .btn[disabled] { opacity: .5; cursor: progress; }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; margin: 56px auto 0; max-width: 860px; background: var(--line);
+           border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+  .stats div { background: var(--bg); padding: 18px 12px; }
+  .stats b { display: block; font-size: 26px; font-weight: 700; letter-spacing: -.02em; }
+  .stats span { font: 500 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  @media (max-width: 680px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; }
+
+  /* playground */
+  .play { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; }
+  @media (max-width: 860px) { .play { grid-template-columns: 1fr; } }
+  .editor { padding: 18px; display: flex; flex-direction: column; gap: 14px; }
+  .label { font: 500 11px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+  textarea { width: 100%; min-height: 108px; resize: vertical; background: #0b0b0f; color: var(--ink); border: 1px solid var(--line-2);
+             border-radius: var(--radius); padding: 12px 14px; font: 16px/1.55 Inter, sans-serif; outline: none; transition: border-color .15s; }
+  textarea:focus { border-color: var(--p400); box-shadow: 0 0 0 3px #6650eb26; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { border: 1px solid var(--line-2); background: #ffffff06; color: var(--muted); border-radius: 999px; padding: 4px 11px;
+          font: 500 12.5px Inter, sans-serif; cursor: pointer; transition: all .15s var(--ease); }
+  .chip:hover { color: var(--ink); border-color: var(--p300); background: #6650eb1a; }
+  .voices { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .voice { text-align: left; border: 1px solid var(--line-2); background: #0b0b0f; color: var(--ink); border-radius: var(--radius);
+           padding: 10px 12px; cursor: pointer; font: 600 14px Inter, sans-serif; transition: all .15s var(--ease); }
+  .voice small { display: block; font: 400 12px Inter, sans-serif; color: var(--muted); }
+  .voice[aria-pressed="true"] { border-color: var(--p400); background: #6650eb1f; box-shadow: inset 0 0 0 1px var(--p400); }
+  .wave { position: relative; height: 112px; border-radius: var(--radius); background: #0b0b0f; border: 1px solid var(--line); overflow: hidden; }
+  .wave canvas { width: 100%; height: 100%; display: block; }
+  .wave .idle { position: absolute; inset: 0; display: grid; place-items: center; color: var(--dim); font: 12px var(--mono); letter-spacing: .06em; }
+  .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .hint { color: var(--dim); font-size: 12.5px; }
+  kbd { border: 1px solid var(--line-2); border-bottom-width: 2px; border-radius: 5px; padding: 0 5px; font-size: 11px; color: var(--muted); }
+  .status { font: 12px var(--mono); color: var(--muted); display: flex; align-items: center; gap: 10px; }
+  .status .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); flex: none; }
+  .status.ok .dot { background: var(--good); box-shadow: 0 0 8px var(--good); }
+  .bar { flex: 1; height: 3px; background: #ffffff12; border-radius: 3px; overflow: hidden; max-width: 220px; }
+  .bar div { height: 100%; width: 0; background: var(--p400); transition: width .2s; }
+  .error { color: #fca5a5; font-size: 13px; }
+  .side { padding: 18px; display: flex; flex-direction: column; gap: 16px; }
+  .control label { display: flex; justify-content: space-between; margin-bottom: 6px; }
+  .control output { font: 12px var(--mono); color: var(--p200); }
+  select { width: 100%; background: #0b0b0f; color: var(--ink); border: 1px solid var(--line-2); border-radius: var(--radius); padding: 8px 10px; font: 14px Inter, sans-serif; }
+  input[type=range] { width: 100%; accent-color: var(--p400); }
+  .linkish { background: none; border: 0; color: var(--muted); font: 12.5px Inter, sans-serif; cursor: pointer; text-align: left; padding: 0; }
+  .linkish:hover { color: var(--ink); }
+  .history { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; }
+  .take { padding: 12px 14px; display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 12px; align-items: center; }
+  .take .pp { width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line-2); background: #ffffff08; color: var(--ink); cursor: pointer; font-size: 12px; }
+  .take .pp:hover { border-color: var(--p300); }
+  .take .t { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .take .f { font: 11.5px var(--mono); color: var(--dim); }
+  .take a { font: 12px var(--mono); }
+
+  /* architecture */
+  .flow { display: flex; align-items: stretch; gap: 0; overflow-x: auto; padding: 22px 18px; }
+  .node { flex: 1 0 128px; min-width: 128px; border: 1px solid var(--line-2); border-radius: var(--radius); padding: 12px; background: var(--card-2); }
+  .node.hi { border-color: #6650eb88; background: linear-gradient(180deg, #6650eb1f, #6650eb08); }
+  .node b { display: block; font-size: 13.5px; } .node span { font-size: 12px; color: var(--muted); line-height: 1.4; display: block; margin-top: 4px; }
+  .node em { font: normal 11px var(--mono); color: var(--p200); display: block; margin-top: 8px; }
+  .arrow { flex: 0 0 26px; display: grid; place-items: center; color: var(--dim); font-size: 14px; }
+  .cols { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 16px; }
+  @media (max-width: 860px) { .cols { grid-template-columns: 1fr; } }
+  .cols .card { padding: 18px; } .cols h3 { margin: 0 0 6px; font-size: 15.5px; letter-spacing: -.01em; } .cols p { margin: 0; color: var(--muted); font-size: 14px; }
+  .cols .num { font: 500 11px var(--mono); color: var(--p300); letter-spacing: .1em; }
+
+  /* tables */
+  .tablewrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th { text-align: left; font: 500 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding: 12px 14px; border-bottom: 1px solid var(--line-2); white-space: nowrap; }
+  td { padding: 11px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td.n { font-family: var(--mono); font-size: 13px; white-space: nowrap; text-align: right; } th.n { text-align: right; }
+  tr:last-child td { border-bottom: 0; }
+  tr.ours td { background: #6650eb14; } tr.ours td:first-child { box-shadow: inset 3px 0 0 var(--p400); }
+  .tag { display: inline-block; font: 500 10.5px var(--mono); letter-spacing: .05em; text-transform: uppercase; color: var(--p200);
+         border: 1px solid #8b7bf055; border-radius: 4px; padding: 0 5px; margin-left: 6px; vertical-align: 1px; }
+  .note { color: var(--dim); font-size: 12.5px; margin-top: 12px; }
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+  @media (max-width: 760px) { .kpis { grid-template-columns: repeat(2, 1fr); } }
+  .kpi { padding: 16px; } .kpi b { font-size: 24px; letter-spacing: -.02em; display: block; } .kpi span { font-size: 12.5px; color: var(--muted); }
+  .bars { padding: 18px; margin-top: 16px; }
+  .barrow { display: grid; grid-template-columns: 200px 1fr 64px; gap: 12px; align-items: center; margin: 7px 0; font-size: 13px; }
+  .barrow .track { height: 8px; background: #ffffff0d; border-radius: 4px; overflow: hidden; }
+  .barrow .fill { height: 100%; background: #ffffff38; border-radius: 4px; }
+  .barrow.ours .fill { background: linear-gradient(90deg, var(--p500), var(--p300)); }
+  .barrow .v { font: 12.5px var(--mono); text-align: right; color: var(--muted); }
+  @media (max-width: 560px) { .barrow { grid-template-columns: 120px 1fr 54px; } }
+
+  /* notes and roadmap */
+  .notes { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 760px) { .notes { grid-template-columns: 1fr; } }
+  .notes .card { padding: 18px 20px; } .notes h3 { margin: 0 0 8px; font-size: 15px; }
+  .notes ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: 14px; } .notes li { margin: 4px 0; }
+  .timeline { position: relative; padding: 6px 0 0 22px; }
+  .timeline::before { content: ""; position: absolute; left: 5px; top: 10px; bottom: 10px; width: 1px; background: var(--line-2); }
+  .step { position: relative; padding: 0 0 22px; }
+  .step::before { content: ""; position: absolute; left: -22px; top: 6px; width: 11px; height: 11px; border-radius: 50%; border: 2px solid var(--dim); background: var(--bg); }
+  .step.done::before { border-color: var(--good); background: var(--good); }
+  .step.now::before { border-color: var(--p300); background: var(--p400); box-shadow: 0 0 0 4px #6650eb33; }
+  .step b { font-size: 14.5px; } .step .when { font: 11.5px var(--mono); color: var(--dim); margin-left: 8px; }
+  .step p { margin: 3px 0 0; color: var(--muted); font-size: 14px; }
+  .stamp { display: inline-flex; gap: 8px; align-items: center; font: 12px var(--mono); color: var(--muted); border: 1px solid var(--line-2);
+           border-radius: 999px; padding: 4px 12px; margin-bottom: 18px; }
+  .stamp i { width: 7px; height: 7px; border-radius: 50%; background: var(--good); box-shadow: 0 0 8px var(--good); }
+  footer { border-top: 1px solid var(--line); margin-top: 80px; padding: 26px 20px; text-align: center; color: var(--dim); font-size: 13px; }
+  .reveal { opacity: 0; transform: translateY(14px); transition: opacity .6s var(--ease), transform .6s var(--ease); }
+  .reveal.in { opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce) { .reveal { opacity: 1; transform: none; } .shimmer { animation: none; } }
 </style>
 </head>
 <body>
-<main>
-  <header>
-    <h1>tiny-voca <span>italiano</span></h1>
-    <p class="lede">A 4.5M-parameter Italian text-to-speech model trained from scratch. Everything runs in your browser:
-      nothing you type is sent anywhere. First visit downloads about 40 MB, then it is cached.
-      <a href="https://github.com/carbogninalberto/tiny-voca-it">Code and models on GitHub</a>.</p>
+<div class="backdrop"></div>
+<nav><div class="in">
+  <a class="brand" href="#top"><i></i>tiny-voca-it</a>
+  <div class="links">
+    <a href="#playground">Playground</a><a href="#architecture">Architecture</a><a href="#benchmarks">Benchmarks</a>
+    <a href="#notes">Notes</a><a href="#status">Status</a>
+    <a class="gh" href="https://github.com/carbogninalberto/tiny-voca-it">GitHub ↗</a>
+  </div>
+</div></nav>
+
+<main id="top">
+  <div class="glow"></div>
+  <header class="hero">
+    <span class="pill"><b>New</b><span id="pill-text">Two voices, pitch smoothing, retrained vocoder</span></span>
+    <h1><span class="shimmer">Italian speech</span><br>in 6.8M parameters</h1>
+    <p class="lede">tiny-voca-it is a tiny text-to-speech model trained from scratch for Italian. It runs entirely in your browser:
+      nothing you type leaves your device.</p>
+    <div class="cta">
+      <a class="btn primary" href="#playground">Try it ▸</a>
+      <a class="btn" href="#benchmarks">Benchmarks</a>
+      <a class="btn" href="https://github.com/carbogninalberto/tiny-voca-it">Code on GitHub</a>
+    </div>
+    <div class="stats" id="hero-stats">
+      <div><b>6.8M</b><span>parameters</span></div>
+      <div><b id="stat-rtf">22×</b><span>real time · 1 CPU thread</span></div>
+      <div><b id="stat-wer">–</b><span>WER · MiniMax IT</span></div>
+      <div><b>2</b><span>voices · IT1, EF3</span></div>
+    </div>
   </header>
 
-  <div class="grid">
-    <section class="panel">
-      <label for="text">Testo</label>
-      <textarea id="text" spellcheck="false">Buongiorno! Questa è una prova del modello tiny-voca, addestrato da zero sulla lingua italiana.</textarea>
-      <div class="chips" id="chips"></div>
-      <div class="row">
-        <button class="speak" id="speak" disabled>Parla</button>
-        <span class="hint"><kbd>Ctrl</kbd>+<kbd>Enter</kbd> · long text is read sentence by sentence</span>
+  <section id="playground" class="reveal">
+    <div class="eyebrow">01 · Playground</div>
+    <h2>Type Italian, hear it instantly</h2>
+    <p class="sub">The first visit downloads the model (about 47 MB), then it is cached. Audio plays as soon as it is ready; the waveform follows playback and stops with it.</p>
+    <div class="play">
+      <div class="card editor">
+        <div>
+          <div class="label" style="margin-bottom:8px">Testo</div>
+          <textarea id="text" spellcheck="false">Buongiorno! Questa è una prova del modello tiny-voca, addestrato da zero sulla lingua italiana.</textarea>
+        </div>
+        <div class="chips" id="chips"></div>
+        <div class="wave"><canvas id="wave"></canvas><div class="idle" id="wave-idle">waveform appears here</div></div>
+        <div class="row">
+          <button class="btn primary" id="speak" disabled>▶ Parla</button>
+          <button class="btn" id="stop" hidden>■ Stop</button>
+          <span class="hint"><kbd>Ctrl</kbd> + <kbd>Enter</kbd> · long text is read sentence by sentence</span>
+        </div>
+        <div class="status" id="status"><span class="dot"></span><span id="status-text">Loading…</span><div class="bar" id="bar-wrap" hidden><div id="bar"></div></div></div>
+        <div class="error" id="error" hidden></div>
       </div>
-      <div class="status" id="status">Loading…<div class="bar"><div id="bar"></div></div></div>
-      <div class="error" id="error" hidden></div>
-    </section>
+      <aside class="card side">
+        <div><div class="label" style="margin-bottom:8px">Voice</div><div class="voices" id="voices"></div></div>
+        <div class="control" id="model-box" hidden><label class="label" for="model">Model</label><select id="model"></select></div>
+        <div class="control" id="emotion-box" hidden><label class="label" for="emotion">Emotion <output>beta</output></label><select id="emotion"></select></div>
+        <div class="control" id="intensity-box" hidden><label class="label" for="intensity">Intensity <output id="intensity-out">0.00</output></label>
+          <input type="range" id="intensity" min="0" max="1.5" step="0.05" value="0"></div>
+        <div class="control"><label class="label" for="speed">Speed <output id="speed-out">1.00×</output></label>
+          <input type="range" id="speed" min="0.6" max="1.6" step="0.05" value="1"></div>
+        <div class="control"><label class="label" for="pitch">Pitch <output id="pitch-out">0 st</output></label>
+          <input type="range" id="pitch" min="-6" max="6" step="0.5" value="0"></div>
+        <div class="control"><label class="label" for="range">Intonation <output id="range-out">1.00</output></label>
+          <input type="range" id="range" min="0.5" max="1.8" step="0.05" value="1"></div>
+        <button class="linkish" id="reset">↺ Reset controls</button>
+      </aside>
+    </div>
+    <div class="history" id="history"></div>
+  </section>
 
-    <aside class="panel">
-      <div class="control"><label for="model">Model</label><select id="model"></select></div>
-      <div class="control" id="speaker-box" hidden><label for="speaker">Speaker</label><select id="speaker"></select></div>
-      <div class="control" id="emotion-box" hidden><label for="emotion">Emotion</label><select id="emotion"></select></div>
-      <div class="control" id="intensity-box" hidden><label for="intensity">Emotion intensity <output id="intensity-out">0.00</output></label>
-        <input type="range" id="intensity" min="0" max="1.5" step="0.05" value="0"></div>
-      <div class="control"><label for="speed">Speed <output id="speed-out">1.00×</output></label>
-        <input type="range" id="speed" min="0.6" max="1.6" step="0.05" value="1"></div>
-      <div class="control"><label for="pitch">Pitch <output id="pitch-out">0 st</output></label>
-        <input type="range" id="pitch" min="-6" max="6" step="0.5" value="0"></div>
-      <div class="control"><label for="range">Intonation <output id="range-out">1.00</output></label>
-        <input type="range" id="range" min="0.5" max="1.8" step="0.05" value="1"></div>
-      <button class="reset" id="reset">Reset controls</button>
-    </aside>
-  </div>
+  <section id="architecture" class="reveal">
+    <div class="eyebrow">02 · Architecture</div>
+    <h2>Small models, sound physics</h2>
+    <p class="sub">A FastSpeech-style voice model renders a rough source-filter waveform; a Vocos-style neural vocoder turns its spectrogram into
+      the final audio, starting from the phase of a pulse train at the predicted pitch. One ONNX graph, about 27 MB in fp32.</p>
+    <div class="card flow">
+      <div class="node"><b>Italian text</b><span>normalisation, sentence split</span></div><div class="arrow">→</div>
+      <div class="node"><b>eSpeak NG</b><span>phonemes, stress, geminates</span><em>WebAssembly</em></div><div class="arrow">→</div>
+      <div class="node hi"><b>Voice model</b><span>encoder, durations and pauses, pitch / voicing / energy, acoustic stack</span><em>4.54M</em></div><div class="arrow">→</div>
+      <div class="node"><b>Source-filter</b><span>pulse train + noise, 100-band Vocos log-mel</span></div><div class="arrow">→</div>
+      <div class="node hi"><b>Prior vocoder</b><span>ConvNeXt + iSTFT, phase from the pitch-driven pulse prior</span><em>2.23M</em></div><div class="arrow">→</div>
+      <div class="node"><b>Audio</b><span>24 kHz</span></div>
+    </div>
+    <div class="cols">
+      <div class="card"><div class="num">A</div><h3>Harmonic-prior vocoder</h3><p>The phase starts from a pulse train built from the predicted pitch, so harmonics stay
+        coherent without a large network. Above 2.5 kHz the pulse share is set per voice to match real speech.</p></div>
+      <div class="card"><div class="num">B</div><h3>Adversarial fine-tuning</h3><p>Multi-period and multi-resolution critics, a pitch-spread loss against monotone speech,
+        and distillation from Vocos at spectrum level.</p></div>
+      <div class="card"><div class="num">C</div><h3>Two curated voices</h3><p>IT1, a CML-TTS audiobook reader, and EF3, 6 h of a cloned synthetic voice screened with Whisper.
+        A 5-frame pitch smoothing removes frame-level tremble.</p></div>
+    </div>
+  </section>
 
-  <div class="history" id="history"><div class="empty" id="empty">Generated audio will appear here.</div></div>
+  <section id="benchmarks" class="reveal">
+    <div class="eyebrow">03 · Benchmarks</div>
+    <h2>Measured on a public Italian test set</h2>
+    <p class="sub" id="bench-sub">Italian split of the <a href="https://huggingface.co/datasets/MiniMaxAI/TTS-Multilingual-Test-Set">MiniMax TTS Multilingual Test Set</a>
+      (100 sentences). Word error rate from Whisper-large-v3; lower is better. Other systems' numbers are copied from their papers.</p>
+    <div class="kpis" id="kpis"></div>
+    <div class="card tablewrap"><table id="bench-table"></table></div>
+    <div class="card bars" id="bench-bars"></div>
+    <p class="note" id="bench-notes"></p>
+  </section>
 
-  <section class="about">
-    <h2>About the voices</h2>
-    <ul>
-      <li><b>IT1</b> (male): a CML-TTS reader of Italian audiobooks (LibriVox recordings).</li>
-      <li><b>EF3</b> (female): a synthetic voice, 6 hours generated with Qwen3-TTS and screened with Whisper.</li>
-      <li>One 4.5M-parameter voice model and a 2.2M-parameter neural vocoder (6.8M parameters in total), all running in
-        your browser. The emotion input is experimental. Work in progress on branch <code>neural-vocoder-emotion</code>;
-        the timestamp in the model name is the last update.</li>
-    </ul>
-    <h2>Known limits</h2>
-    <ul>
-      <li>Long and short <i>l, n, m, r</i> are not always distinguished (<i>pala</i> may sound like <i>palla</i>).</li>
-      <li>The browser uses eSpeak NG 1.52 (WebAssembly); the model was trained with 1.51 tokens. They agree on the vast majority of the training texts.</li>
-      <li>Names and foreign words can be read wrongly; one sentence at a time works best.</li>
-    </ul>
-    <h2>Credits and licences</h2>
-    <ul>
-      <li>Model and code: Apache-2.0, based on <a href="https://github.com/n4ze3m/tiny-voca">tiny-voca</a> by Muhammed Nazeem.</li>
-      <li>Training data: <a href="https://github.com/freds0/CML-TTS-Dataset">CML-TTS</a> Italian (CC BY 4.0), from LibriVox recordings.</li>
-      <li>Phonemizer: <a href="https://github.com/espeak-ng/espeak-ng">eSpeak NG</a> (GPL-3.0), WebAssembly build from the
-        <a href="https://github.com/ianmarmour/espeak-ng.js">espeak-ng.js</a> project, served unmodified in <code>espeak-ng/</code> with its licence.</li>
-      <li>Runtime: <a href="https://onnxruntime.ai">ONNX Runtime Web</a> (MIT).</li>
-    </ul>
+  <section id="notes" class="reveal">
+    <div class="eyebrow">04 · Notes</div>
+    <h2>Good to know</h2>
+    <div class="notes">
+      <div class="card"><h3>Limits</h3><ul>
+        <li>Italian only. Numbers, prices, abbreviations and foreign names may be read wrongly.</li>
+        <li>Long and short <i>l, n, m, r</i> are not always distinguished.</li>
+        <li>A slight metallic trace remains on some sentences; the emotion control is experimental.</li>
+        <li>No voice cloning and no streaming yet.</li></ul></div>
+      <div class="card"><h3>Privacy and runtime</h3><ul>
+        <li>Everything runs locally with ONNX Runtime Web (single-thread WebAssembly).</li>
+        <li>No text or audio is sent to a server; the model is cached by your browser.</li>
+        <li>EF3 is a synthetic voice, generated with Qwen3-TTS; IT1 is a LibriVox reader from CML-TTS.</li></ul></div>
+      <div class="card"><h3>Credits and licences</h3><ul>
+        <li>Code and weights: Apache-2.0, based on <a href="https://github.com/n4ze3m/tiny-voca">tiny-voca</a> by Muhammed Nazeem.</li>
+        <li>Data: <a href="https://github.com/freds0/CML-TTS-Dataset">CML-TTS</a> Italian (CC BY 4.0); synthetic EF3 speech from Qwen3-TTS (Apache-2.0 weights).</li>
+        <li>Vocoder teacher: <a href="https://github.com/gemelo-ai/vocos">Vocos</a> (MIT). Phonemizer: <a href="https://github.com/espeak-ng/espeak-ng">eSpeak NG</a> (GPL-3.0), served unmodified.</li></ul></div>
+      <div class="card"><h3>Reproduce</h3><ul>
+        <li>Training recipes, round scripts and watchdogs: <code>scripts/training/</code>.</li>
+        <li>Benchmark: <code>scripts/benchmark_minimax_it.py</code>.</li>
+        <li>Every decision and blind test: <a href="https://github.com/carbogninalberto/tiny-voca-it/blob/neural-vocoder-emotion/docs/analysis/quality-journey.md">quality journey</a>.</li></ul></div>
+    </div>
+  </section>
+
+  <section id="status" class="reveal">
+    <div class="eyebrow">05 · Current state</div>
+    <h2>Where it is heading</h2>
+    <div class="stamp"><i></i><span id="stamp">updated –</span></div>
+    <div class="card" style="padding:22px 22px 4px"><div class="timeline" id="timeline"></div></div>
   </section>
 </main>
+<footer>tiny-voca-it · Apache-2.0 · <a href="https://github.com/carbogninalberto/tiny-voca-it">github.com/carbogninalberto/tiny-voca-it</a></footer>
 
 <script>
 const SAMPLES = [
+  ["Saluto", "Buongiorno! Questa è una prova del modello tiny-voca, addestrato da zero sulla lingua italiana."],
   ["Geminate", "La palla è caduta sulla pala. Mi fa pena quella penna rotta."],
-  ["Nonno / nono", "Il nonno è arrivato nono alla gara di corsa."],
   ["gn / gl", "Ho mangiato gli gnocchi con mio figlio e sua moglie."],
   ["Accenti", "Perché la città è così silenziosa stasera?"],
-  ["Numeri", "Il treno parte alle 12:30 dal binario 7 e il biglietto costa € 25,50."],
-  ["Elisione", "L'amico di un'altra persona mi ha offerto un po' d'acqua."],
   ["Domanda", "Hai già prenotato il ristorante per domani sera?"],
   ["Lungo", "Quando finalmente arrivammo in cima alla montagna, il sole stava tramontando e l'aria era fresca e limpida."],
   ["Bar", "Buongiorno, vorrei un cappuccino e un cornetto, per favore."],
 ];
+const VOICE_INFO = { IT1: "male · audiobook reader", EF3: "female · synthetic" };
 const $ = (id) => document.getElementById(id);
 const controls = { speed: [1, v => `${(+v).toFixed(2)}×`], pitch: [0, v => `${v > 0 ? "+" : ""}${v} st`], range: [1, v => (+v).toFixed(2)],
                    intensity: [0, v => (+v).toFixed(2)] };
-let models = [], ready = false, request = 0, pending = null;
+let models = [], ready = false, request = 0, pending = null, voiceIndex = 0;
 const worker = new Worker("worker.js", { type: "module" });
 
 for (const [label, text] of SAMPLES) {
@@ -160,17 +341,18 @@ for (const [id, [, fmt]] of Object.entries(controls)) {
 }
 $("reset").onclick = () => { for (const [id, [d, fmt]] of Object.entries(controls)) { $(id).value = d; $(`${id}-out`).textContent = fmt(d); } };
 
-function setStatus(text, progress) {
-  $("status").firstChild.textContent = text;
+function setStatus(text, progress, ok) {
+  $("status-text").textContent = text;
+  $("status").classList.toggle("ok", !!ok);
   $("bar").style.width = progress == null ? "0" : `${Math.round(progress * 100)}%`;
-  $("bar").parentElement.hidden = progress == null;
+  $("bar-wrap").hidden = progress == null;
 }
 function showError(message) { $("error").textContent = message; $("error").hidden = !message; }
 const selected = () => models.find(m => m.id === $("model").value) || models[0];
 
 function load() {
   ready = false; $("speak").disabled = true;
-  setStatus("Loading…", 0);
+  setStatus("Loading the model…", 0);
   worker.postMessage({ type: "load", model: selected() });
 }
 
@@ -178,18 +360,16 @@ function speak() {
   if (!ready || pending) return;
   const text = $("text").value.trim();
   if (!text) return showError("Scrivi un testo.");
-  showError("");
+  showError(""); player.stop();
   pending = { id: ++request, text, model: selected(), speed: +$("speed").value, pitch: +$("pitch").value, range: +$("range").value,
-              voice: +($("speaker").value || 0), emotion: +($("emotion").value || 0),
-              intensity: $("emotion-box").hidden ? 0 : +$("intensity").value };
+              voice: voiceIndex, emotion: +($("emotion").value || 0), intensity: $("emotion-box").hidden ? 0 : +$("intensity").value };
+  pending.speakerName = document.querySelector('.voice[aria-pressed="true"]')?.dataset.name || "";
   $("speak").disabled = true; $("speak").textContent = "…";
-  pending.speakerName = $("speaker-box").hidden ? "" : $("speaker").selectedOptions[0]?.textContent;
-  pending.emotionName = $("emotion-box").hidden ? "" : $("emotion").selectedOptions[0]?.textContent;
   worker.postMessage({ type: "speak", ...pending, model: undefined });
 }
 
 function wav(samples, rate) {
-  // Same playback level as the samples and the local playground: RMS 0.1 (about -20 LUFS), peaks at most 0.95.
+  // Same playback level as the reference samples: RMS 0.1 (about -20 LUFS), peaks at most 0.95.
   const peak = samples.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
   const rms = Math.sqrt(samples.reduce((m, v) => m + v * v, 0) / Math.max(1, samples.length));
   const gain = Math.min(0.1 / Math.max(rms, 1e-6), 0.95 / Math.max(peak, 1e-6));
@@ -203,47 +383,103 @@ function wav(samples, rate) {
   return new Blob([buffer], { type: "audio/wav" });
 }
 
+/* Waveform player: draws the clip's envelope, sweeps a playhead and pulses the live level while playing; stops with playback. */
+const player = (() => {
+  const canvas = $("wave"), ctx = canvas.getContext("2d"), audio = new Audio();
+  let peaks = null, raf = 0, audioContext = null, analyser = null, level = 0;
+  const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  function size() { const r = canvas.getBoundingClientRect(), d = devicePixelRatio || 1; canvas.width = r.width * d; canvas.height = r.height * d; }
+  function computePeaks(samples, n) {
+    const out = new Float32Array(n), step = samples.length / n;
+    for (let i = 0; i < n; i++) { let m = 0; for (let j = Math.floor(i * step), e = Math.floor((i + 1) * step); j < e; j++) m = Math.max(m, Math.abs(samples[j])); out[i] = m; }
+    const top = Math.max(...out, 1e-6); return out.map(v => Math.pow(v / top, 0.7));
+  }
+  function draw() {
+    const w = canvas.width, h = canvas.height, d = devicePixelRatio || 1; ctx.clearRect(0, 0, w, h);
+    if (!peaks) return;
+    const bar = 3 * d, gap = 2 * d, n = Math.floor(w / (bar + gap)), at = audio.duration ? audio.currentTime / audio.duration : 0;
+    const playing = !audio.paused && !audio.ended;
+    for (let i = 0; i < n; i++) {
+      const v = peaks[Math.floor(i / n * peaks.length)], x = i * (bar + gap), past = i / n <= at;
+      const near = playing && Math.abs(i / n - at) < 0.02 ? 1 + level * 0.9 : 1;
+      const bh = Math.max(2 * d, v * (h * 0.78) * near);
+      ctx.fillStyle = past ? css("--p300") : "#ffffff2e";
+      ctx.beginPath(); ctx.roundRect(x, (h - bh) / 2, bar, bh, bar / 2); ctx.fill();
+    }
+    if (audio.duration) { ctx.fillStyle = css("--p50"); ctx.fillRect(Math.round(at * w), 0, d, h); }
+  }
+  function loop() {
+    if (analyser) { const a = new Uint8Array(analyser.fftSize); analyser.getByteTimeDomainData(a); let s = 0; for (const v of a) s += ((v - 128) / 128) ** 2; level = Math.min(1, Math.sqrt(s / a.length) * 4); }
+    draw(); raf = (!audio.paused && !audio.ended) ? requestAnimationFrame(loop) : 0;
+    if (!raf) { level = 0; draw(); playingUI(false); }
+  }
+  function playingUI(on) { $("stop").hidden = !on; document.querySelectorAll(".take .pp").forEach(b => b.textContent = b.dataset.url === audio.src && on ? "❚❚" : "▶"); }
+  audio.addEventListener("play", () => { playingUI(true); cancelAnimationFrame(raf); raf = requestAnimationFrame(loop); });
+  addEventListener("resize", () => { size(); draw(); });
+  return {
+    load(samples, url) {
+      $("wave-idle").hidden = true; size(); peaks = computePeaks(samples, 600); audio.src = url;
+      try {
+        if (!audioContext) { audioContext = new AudioContext(); analyser = audioContext.createAnalyser(); analyser.fftSize = 1024;
+          audioContext.createMediaElementSource(audio).connect(analyser); analyser.connect(audioContext.destination); }
+        audioContext.resume();
+      } catch (e) { analyser = null; }
+      draw();
+    },
+    play() { audio.currentTime = 0; audio.play().catch(() => setStatus("Press ▶ on the take to listen (autoplay blocked)", null, true)); },
+    stop() { audio.pause(); },
+    toggle(samples, url) { if (audio.src === url && !audio.paused) return audio.pause(); if (audio.src !== url) this.load(samples, url); this.play(); },
+  };
+})();
+$("stop").onclick = () => player.stop();
+
 function addTake(job, data) {
-  $("empty")?.remove();
   const seconds = data.audio.length / data.sampleRate;
   const url = URL.createObjectURL(wav(data.audio, data.sampleRate));
   const take = document.createElement("div");
-  take.className = "take";
-  take.innerHTML = `<div class="text"></div><audio controls autoplay></audio>
-    <div class="facts"><span>${job.model.label}</span><span>${seconds.toFixed(2)}s audio</span>
-    <span>${(data.totalTime / 1000).toFixed(2)}s in browser (${Math.round(seconds / (data.totalTime / 1000))}× real time)</span>
-    <span>${job.speakerName ? job.speakerName + " · " : ""}${job.emotionName && job.intensity > 0 ? job.emotionName + " " + job.intensity + " · " : ""}speed ${job.speed} · pitch ${job.pitch} st · intonation ${job.range}</span><a download="tiny-voca-it.wav">download</a></div>
-    <details><summary>phonemes</summary><pre></pre></details>`;
-  take.querySelector(".text").textContent = job.text;
-  take.querySelector("audio").src = url;
+  take.className = "card take";
+  take.innerHTML = `<button class="pp" title="Play">▶</button><div><div class="t"></div>
+    <div class="f">${job.speakerName ? job.speakerName + " · " : ""}${seconds.toFixed(1)} s audio · ${(data.totalTime / 1000).toFixed(2)} s in browser
+    (${Math.round(seconds / (data.totalTime / 1000))}× real time)</div></div><a download="tiny-voca-it.wav">wav ↓</a>`;
+  take.querySelector(".t").textContent = job.text;
+  const pp = take.querySelector(".pp"); pp.dataset.url = url;
+  pp.onclick = () => player.toggle(data.audio, url);
   take.querySelector("a").href = url;
-  take.querySelector("pre").textContent = data.phonemes;
   $("history").prepend(take);
+  while ($("history").children.length > 6) $("history").lastChild.remove();
+  player.load(data.audio, url); player.play();
+}
+
+function setVoices(names, preferred) {
+  const offered = names.map((v, i) => [v, i]).filter(([v]) => !selected().voices || selected().voices.includes(v));
+  const keep = offered.find(([v]) => v === (document.querySelector('.voice[aria-pressed="true"]')?.dataset.name || preferred)) || offered[0];
+  $("voices").replaceChildren(...offered.map(([name, index]) => {
+    const b = document.createElement("button"); b.className = "voice"; b.dataset.name = name;
+    b.innerHTML = `${name}<small>${VOICE_INFO[name] || ""}</small>`;
+    b.setAttribute("aria-pressed", String(name === keep[0]));
+    b.onclick = () => { voiceIndex = index; document.querySelectorAll(".voice").forEach(x => x.setAttribute("aria-pressed", String(x === b))); };
+    return b;
+  }));
+  voiceIndex = keep[1];
 }
 
 worker.onmessage = ({ data }) => {
   if (data.type === "status") setStatus(data.text, data.progress);
   else if (data.type === "ready") {
     ready = true; $("speak").disabled = false;
-    setStatus(`Ready · ${selected().label} · voice ${Math.round(data.step / 1000)}k steps` + (data.vocoderStep ? ` · vocoder ${Math.round(data.vocoderStep / 1000)}k` : ""));
-    const keep = $("speaker").selectedOptions[0]?.textContent;
-    // A model entry may list the voices to offer (the model itself keeps all its speaker rows).
-    const offered = data.voices.map((v, i) => [v, i]).filter(([v]) => !selected().voices || selected().voices.includes(v));
-    $("speaker").replaceChildren(...offered.map(([v, i]) => new Option(v, i)));
-    const preferred = offered.some(([v]) => v === keep) ? keep : (selected().voice || offered[0][0]);
-    $("speaker").value = String(Math.max(0, data.voices.indexOf(preferred)));
-    $("speaker-box").hidden = offered.length < 2;
+    setStatus(`Ready · voice ${Math.round(data.step / 1000)}k steps` + (data.vocoderStep ? ` · vocoder ${Math.round(data.vocoderStep / 1000)}k` : ""), null, true);
+    setVoices(data.voices, selected().voice);
     $("emotion").replaceChildren(...data.emotions.map((e, i) => new Option(e, i)));
     $("emotion-box").hidden = $("intensity-box").hidden = !data.emotions.length;
   }
   else if (data.type === "sentence") setStatus(`Speaking… sentence ${data.index + 1} / ${data.total}`);
   else if (data.type === "done") {
     const job = pending; pending = null;
-    $("speak").disabled = false; $("speak").textContent = "Parla"; setStatus(`Ready · ${selected().label}`);
+    $("speak").disabled = false; $("speak").textContent = "▶ Parla"; setStatus("Ready", null, true);
     addTake(job, data);
   } else if (data.type === "error") {
-    pending = null; $("speak").disabled = !ready; $("speak").textContent = "Parla";
-    showError(data.message); setStatus(ready ? `Ready · ${selected().label}` : "Could not load");
+    pending = null; $("speak").disabled = !ready; $("speak").textContent = "▶ Parla";
+    showError(data.message); setStatus(ready ? "Ready" : "Could not load", null, ready);
   }
 };
 worker.onerror = (event) => { showError("Could not start the worker: " + (event.message || "unsupported browser")); };
@@ -254,8 +490,32 @@ $("text").addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey
 fetch("models/models.json").then(r => r.json()).then(list => {
   models = list;
   $("model").replaceChildren(...models.map(m => new Option(m.label, m.id)));
+  $("model-box").hidden = models.length < 2;
   load();
 }).catch(e => showError("Could not load the model list: " + e.message));
+
+/* Benchmarks, status and timestamp come from site.json (written at build time). */
+const esc = (s) => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+fetch("site.json").then(r => r.json()).then(site => {
+  $("stamp").textContent = `updated ${site.updated}`;
+  if (site.pill) $("pill-text").textContent = site.pill;
+  const b = site.benchmark;
+  if (b.ours?.wer != null) $("stat-wer").textContent = `${b.ours.wer.toFixed(2)}%`;
+  if (b.ours?.rtf) $("stat-rtf").textContent = `${Math.round(1 / b.ours.rtf)}×`;
+  $("kpis").innerHTML = (b.kpis || []).map(k => `<div class="card kpi"><b>${esc(k.value)}</b><span>${esc(k.label)}</span></div>`).join("");
+  $("bench-table").innerHTML = `<thead><tr><th>System</th><th class="n">Params</th><th class="n">WER % ↓</th><th class="n">SIM ↑</th><th>Source</th></tr></thead><tbody>` +
+    b.rows.map(r => `<tr class="${r.ours ? "ours" : ""}"><td>${esc(r.system)}${r.ours ? '<span class="tag">this model</span>' : ""}</td>
+      <td class="n">${esc(r.params)}</td><td class="n">${r.wer == null ? "–" : r.wer.toFixed(2)}</td><td class="n">${r.sim == null ? "n/a" : r.sim.toFixed(3)}</td>
+      <td style="color:var(--muted);font-size:13px">${esc(r.source)}</td></tr>`).join("") + "</tbody>";
+  const top = Math.max(...b.rows.map(r => r.wer || 0));
+  $("bench-bars").innerHTML = `<div class="label" style="margin-bottom:10px">Word error rate, lower is better</div>` + b.rows.filter(r => r.wer != null).map(r =>
+    `<div class="barrow ${r.ours ? "ours" : ""}"><span>${esc(r.short || r.system)}</span><div class="track"><div class="fill" style="width:${(r.wer / top * 100).toFixed(1)}%"></div></div><span class="v">${r.wer.toFixed(2)}</span></div>`).join("");
+  $("bench-notes").innerHTML = (b.notes || []).map(esc).join("<br>");
+  $("timeline").innerHTML = site.roadmap.map(s => `<div class="step ${s.state}"><b>${esc(s.title)}</b>${s.when ? `<span class="when">${esc(s.when)}</span>` : ""}<p>${esc(s.text)}</p></div>`).join("");
+}).catch(() => {});
+
+const observer = new IntersectionObserver(es => es.forEach(e => e.isIntersecting && e.target.classList.add("in")), { threshold: .08 });
+document.querySelectorAll(".reveal").forEach(el => observer.observe(el));
 </script>
 </body>
 </html>

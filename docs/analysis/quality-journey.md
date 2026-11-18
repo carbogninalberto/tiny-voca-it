@@ -950,3 +950,26 @@ From now on decisions are made and recorded here, without waiting for approval.
 - **Tremble blind test:** the listener preferred the smoothed version on both
   voices (EF3-S2, IT1-S1). Pitch smoothing is now the default everywhere: CLI,
   playground, and Pages (`23e1624`).
+
+### 6.8 Benchmark and landing page (19 November, 00:15)
+
+- **Vocoder-three adopted:**
+  - IT1 at gain 0: real-spectrogram mel error 0.172 → 0.159, model-spectrogram
+    error 0.665 → 0.663.
+  - EF3: unchanged.
+- **Public benchmark:** MiniMax TTS Multilingual Test Set, Italian split, scored with
+  Whisper-large-v3.
+  - Result: **WER 0.80%, CER 0.51%** (IT1 1.00%, EF3 0.66%). The published
+    systems range from 0.95% (Qwen3-TTS 1.7B) to 2.16%.
+  - These are not identical tasks: they clone Common Voice speakers zero-shot.
+    See `docs/benchmarks/minimax-it/`.
+- **Speed:** 22× real time on one CPU thread; 79× on an RTX 5070 Ti at batch 1.
+- **Landing page:**
+  - A dark style modelled on kuayle.com. It has a playground with autoplay and a
+    waveform that follows playback and stops with it.
+  - Sections: architecture, benchmark table, notes, and a roadmap with the build
+    timestamp.
+  - The final roadmap item is **tiny-voca-it-zs**: zero-shot cloning from 15 s,
+    in a separate, bigger model (about 8–10M) with its own voice-fingerprint
+    network.
+  - Pages `0cac58a`.

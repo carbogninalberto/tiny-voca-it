@@ -66,6 +66,16 @@ The design choices, numbers and failed attempts are documented in
 [docs/architecture.md](docs/architecture.md) and
 [docs/analysis/quality-journey.md](docs/analysis/quality-journey.md).
 
+## Benchmark
+
+On the Italian split of the public [MiniMax TTS Multilingual Test Set](https://huggingface.co/datasets/MiniMaxAI/TTS-Multilingual-Test-Set)
+(100 sentences, Whisper-large-v3), tiny-voca-it scores **0.80% WER** (CER 0.51%). The published systems
+on the same set range from 0.95% (Qwen3-TTS 1.7B) to 2.16%.
+
+- **Not the same task:** those systems clone voices zero-shot.
+- **Speed:** 22× real time on one CPU thread, 79× on a GPU.
+- **Full table and caveats:** [docs/benchmarks/minimax-it](docs/benchmarks/minimax-it/README.md).
+
 ## Install
 
 ```bash
@@ -82,7 +92,7 @@ You need eSpeak NG 1.51 with the `it` voice on `PATH`; see
 ```bash
 python -m tiny_voca.infer \
   --checkpoint runs/voice-two/inference-115000.pt \
-  --vocoder runs/vocoder-two/vocoder-voicegain.pt \
+  --vocoder runs/vocoder-three/vocoder-voicegain.pt \
   --voice IT1 \
   --text "Buongiorno! Come stai oggi?" \
   --output ciao.wav
@@ -164,7 +174,8 @@ PYTHONPATH=src:tests python -m unittest discover -s tests
 - **Text normalisation is basic:** some abbreviations, Roman numerals, prices and
   loanwords are read wrongly.
 - **Long and short `l n m r`** are not always distinguished.
-- **No voice cloning and no streaming** yet.
+- **No voice cloning and no streaming** yet. Zero-shot cloning from 15 s of audio is planned as a separate,
+  bigger model, **tiny-voca-it-zs** (about 8–10M, with its own voice-fingerprint network).
 
 ## Credits and licences
 

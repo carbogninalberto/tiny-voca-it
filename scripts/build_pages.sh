@@ -22,6 +22,9 @@ ESPEAK_INTEGRITY=sha512-Xe4YC7d/+O06zYpsqrJ3LpbETdL/IO8JrnAmWcQEMoRFmMLWU+2y2Hnp
 rm -rf "$OUT"
 mkdir -p "$OUT/models" "$OUT/espeak-ng"
 cp playground/web/index.html playground/web/worker.js playground/web/frontend.js "$OUT/"
+# Landing-page data (benchmark table, roadmap, timestamp) from the committed benchmark result.
+BENCH=${BENCH_RESULT:-docs/benchmarks/minimax-it/result.json}
+[ -f "$BENCH" ] && "${PYTHON:-.venv/bin/python}" scripts/site_data.py --result "$BENCH" --output "$OUT/site.json" > /dev/null
 touch "$OUT/.nojekyll"
 
 # eSpeak NG (WebAssembly), verified against the npm registry's integrity hash.
