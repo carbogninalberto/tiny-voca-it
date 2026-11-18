@@ -884,3 +884,17 @@ From now on decisions are made and recorded here, without waiting for approval.
     the model metadata. If the gain is far from 0.05, fine-tune the vocoder with
     the gain randomised in [0, 0.1] so every setting is in distribution. This
     replaces the planned voice-loss round for now.
+- **Per-voice pulse share (22:20):**
+  - Blind G files: the listener heard no difference between gains 0, 0.02 and
+    0.05 on either voice ("all very good").
+  - Decision: per the data, take the gain that brings each voice's 4–6 kHz
+    locking closest to its real speech. **IT1: 0.0** (0.38 vs real 0.31).
+    **EF3: 0.05**, the trained value (0.50 vs 0.48).
+  - Implementation: `VocoderConfig.voice_high_gain`, a per-voice override.
+    `Vocoder.forward(..., voice=name)` uses it, and `infer` and the playground
+    pass the voice. The ONNX graph holds a per-voice gain table indexed by the
+    `voice` input, so the browser applies it with no new inputs.
+  - Tested: export parity and config round trip (`test_per_voice_high_gain`);
+    89 tests.
+  - File: `runs/vocoder-two/vocoder-voicegain.pt`, live on Pages (`7542565`)
+    and the default in the playground.

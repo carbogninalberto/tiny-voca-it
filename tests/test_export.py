@@ -91,9 +91,31 @@ class NeuralExportTest(unittest.TestCase):
             voiced = (torch.arange(frames) % 9 < 6).float()[None]
             with torch.no_grad():
                 reference = vocoder(VocosMel()(wave).transpose(1, 2), f0, voiced)
-                audio = wrapper._neural(wave, f0, voiced, torch.tensor(frames))
+                audio = wrapper._neural(wave, f0, voiced, torch.tensor(frames), torch.tensor([0]))
             self.assertEqual(audio.shape, reference.shape)
             self.assertLess(float((audio - reference).abs().max()), 1e-3 * float(reference.abs().max()))
+
+    def test_per_voice_high_gain(self):
+        model = small_model()
+        name = model.config.speakers[0]
+        plain = small_vocoder(2500.0)
+        vocoder = Vocoder(VocoderConfig.from_dict({**plain.config.to_dict(), "voice_high_gain": [[name, 0.0]]})).eval()
+        vocoder.load_state_dict(plain.state_dict())
+        self.assertEqual(VocoderConfig.from_dict(vocoder.config.to_dict()), vocoder.config)
+        self.assertEqual(vocoder.config.high_gain(name), 0.0)
+        self.assertEqual(vocoder.config.high_gain("other"), 0.1)
+        wrapper = Exportable(model, vocoder=vocoder).eval()
+        frames = 37
+        wave = 0.1 * torch.randn(1, frames * model.config.hop, generator=torch.Generator().manual_seed(2))
+        f0 = 120 + 30 * torch.rand(1, frames, generator=torch.Generator().manual_seed(3))
+        voiced = torch.ones(1, frames)
+        mel = VocosMel()(wave).transpose(1, 2)
+        with torch.no_grad():
+            reference = vocoder(mel, f0, voiced, voice=name)
+            default = vocoder(mel, f0, voiced)
+            audio = wrapper._neural(wave, f0, voiced, torch.tensor(frames), torch.tensor([0]))
+        self.assertGreater(float((reference - default).abs().max()), 1e-4)
+        self.assertLess(float((audio - reference).abs().max()), 1e-3 * float(reference.abs().max()))
 
     def test_onnx_with_vocoder_and_emotion_matches_pytorch(self):
         try:

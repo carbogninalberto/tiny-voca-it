@@ -80,7 +80,7 @@ You need eSpeak NG 1.51 with the `it` voice on `PATH`; see
 ```bash
 python -m tiny_voca.infer \
   --checkpoint runs/voice-two/inference-115000.pt \
-  --vocoder runs/vocoder-two/vocoder-0200000.pt \
+  --vocoder runs/vocoder-two/vocoder-voicegain.pt \
   --voice IT1 \
   --text "Buongiorno! Come stai oggi?" \
   --output ciao.wav

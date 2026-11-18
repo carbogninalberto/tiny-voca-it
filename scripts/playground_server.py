@@ -192,7 +192,7 @@ class Engine:
                         f0 = model.frequency(prosody[:, 0])[None].float()
                         voiced = (prosody[:, 1] > 0).float()[None]
                         torch.manual_seed(0)
-                        wave = ours(mel.transpose(1, 2), f0, voiced)[0]
+                        wave = ours(mel.transpose(1, 2), f0, voiced, voice=voice)[0]
                     else:
                         wave = ours(mel.transpose(1, 2))[0]
                     detail = f"vocoder {getattr(self, 'vocoder_name', '')} {self.vocoder_step / 1000:g}k"

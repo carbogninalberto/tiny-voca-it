@@ -79,7 +79,7 @@ def speak(model, text, voice, speed=1.0, pitch_shift=0.0, seed=0, pitch_range=1.
     return audio[0, :int(lengths[0])].cpu(), phones, details
 
 
-def vocode(model, wave, details, checkpoint):
+def vocode(model, wave, details, checkpoint, voice=None):
     """Render the final audio with the neural vocoder: the Vocos log-mel of the
     source-filter waveform, plus (for a prior vocoder) the model's pitch and voicing."""
     from .losses import VocosMel
@@ -91,7 +91,7 @@ def vocode(model, wave, details, checkpoint):
         if not vocoder.config.prior:
             return vocoder(mel)[0]
         prosody = details["prosody"][0, :frames].cpu()
-        return vocoder(mel, model.frequency(prosody[:, 0])[None].float(), (prosody[:, 1] > 0).float()[None])[0]
+        return vocoder(mel, model.frequency(prosody[:, 0])[None].float(), (prosody[:, 1] > 0).float()[None], voice=voice)[0]
 
 
 def main():
@@ -122,7 +122,7 @@ def main():
     wave, phones, details = speak(model, args.text, args.voice, args.speed, args.pitch_shift, pitch_range=args.pitch_range,
                                   emotion=args.emotion, intensity=args.intensity if args.emotion else 0.0)
     if args.vocoder:
-        wave = vocode(model, wave, details, args.vocoder)
+        wave = vocode(model, wave, details, args.vocoder, args.voice or model.config.speakers[0])
     args.output.parent.mkdir(parents=True, exist_ok=True)
     # Floating WAV preserves output for inspection; no silent clipping or normalization.
     sf.write(args.output, wave.numpy(), model.config.sample_rate, subtype="FLOAT")

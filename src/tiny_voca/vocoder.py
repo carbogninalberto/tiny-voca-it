@@ -39,13 +39,24 @@ class VocoderConfig:
     # Real speech is less pulse-locked at high frequencies than the pulse train.
     prior_high_hz: float = 0.0
     prior_high_gain: float = 1.0
+    # Optional per-voice override of prior_high_gain: ((voice name, gain), ...). Voices
+    # differ in how pulse-locked their high band is (IT1 is breathier than EF3).
+    voice_high_gain: tuple = ()
 
     def to_dict(self):
-        return asdict(self)
+        value = asdict(self)
+        value["voice_high_gain"] = [list(pair) for pair in self.voice_high_gain]
+        return value
 
     @classmethod
     def from_dict(cls, value):
-        return cls(**{"prior": False, "prior_noise": 0.03, "prior_high_hz": 0.0, "prior_high_gain": 1.0, **value})
+        value = {"prior": False, "prior_noise": 0.03, "prior_high_hz": 0.0, "prior_high_gain": 1.0, **value}
+        value["voice_high_gain"] = tuple((str(name), float(gain)) for name, gain in value.get("voice_high_gain", ()))
+        return cls(**value)
+
+    def high_gain(self, voice=None):
+        """The high-band pulse share for a voice name (the default when it has no override)."""
+        return dict(self.voice_high_gain).get(voice, self.prior_high_gain)
 
 
 class ConvNeXtBlock(nn.Module):
@@ -63,14 +74,18 @@ class ConvNeXtBlock(nn.Module):
         return x + y.transpose(1, 2)
 
 
-def pulse_weight(c):
-    """[bins] weight of the pulse train in the prior: 1 below ``prior_high_hz``, then a
-    linear fade (in log frequency) to ``prior_high_gain`` at twice that frequency."""
+def pulse_position(c):
+    """[bins] 0 below ``prior_high_hz``, rising linearly in log frequency to 1 at twice it."""
     frequencies = torch.linspace(0, c.sample_rate / 2, c.fft // 2 + 1)
     if c.prior_high_hz <= 0:
-        return torch.ones_like(frequencies)
-    position = (torch.log2(frequencies.clamp_min(1.0) / c.prior_high_hz)).clamp(0, 1)
-    return 1 + (c.prior_high_gain - 1) * position
+        return torch.zeros_like(frequencies)
+    return (torch.log2(frequencies.clamp_min(1.0) / c.prior_high_hz)).clamp(0, 1)
+
+
+def pulse_weight(c, gain=None):
+    """[bins] weight of the pulse train in the prior: 1 below ``prior_high_hz``, then a
+    linear fade (in log frequency) to ``gain`` (default ``prior_high_gain``) at twice that frequency."""
+    return 1 + ((c.prior_high_gain if gain is None else gain) - 1) * pulse_position(c)
 
 
 class Vocoder(nn.Module):
@@ -89,9 +104,10 @@ class Vocoder(nn.Module):
         self.register_buffer("window", torch.hann_window(c.fft), persistent=False)
         self.register_buffer("pulse_weight", pulse_weight(c), persistent=False)
 
-    def analyse_prior(self, f0, voiced, noise=None):
+    def analyse_prior(self, f0, voiced, noise=None, gain=None):
         """Pitch [B, frames] in Hz and voicing in [0, 1] -> complex STFT [B, bins, frames + 1]
-        of a pulse train (voiced frames) plus a fixed noise floor."""
+        of a pulse train (voiced frames) plus a fixed noise floor. ``gain`` overrides the
+        high-band pulse share."""
         from .model import pulse_train
         c = self.config
         samples = f0.shape[1] * c.hop
@@ -103,7 +119,8 @@ class Vocoder(nn.Module):
             source = pulses * gate + c.prior_noise * noise
             return torch.stft(source, c.fft, c.hop, window=self.window, center=True, return_complex=True)
         stft = lambda x: torch.stft(x, c.fft, c.hop, window=self.window, center=True, return_complex=True)
-        return stft(pulses * gate) * self.pulse_weight[:, None] + stft(c.prior_noise * noise)
+        weight = self.pulse_weight if gain is None else pulse_weight(c, gain).to(self.pulse_weight)
+        return stft(pulses * gate) * weight[:, None] + stft(c.prior_noise * noise)
 
     def spectrum(self, mel, prior=None):
         """mel [B, bands, frames] -> (log magnitude, phase or phase correction), each [B, bins, frames]."""
@@ -121,9 +138,11 @@ class Vocoder(nn.Module):
         bins = self.config.fft // 2 + 1
         return x[:, :bins], x[:, bins:]
 
-    def forward(self, mel, f0=None, voiced=None, noise=None):
-        """mel [B, bands, frames + 1] (and, with a prior, f0/voiced [B, frames]) -> wave [B, frames * hop]."""
-        prior = self.analyse_prior(f0, voiced, noise) if self.config.prior else None
+    def forward(self, mel, f0=None, voiced=None, noise=None, voice=None):
+        """mel [B, bands, frames + 1] (and, with a prior, f0/voiced [B, frames]) -> wave [B, frames * hop].
+        ``voice`` (a name) selects a per-voice high-band pulse share, if the config has one."""
+        gain = self.config.high_gain(voice) if voice is not None else None
+        prior = self.analyse_prior(f0, voiced, noise, gain) if self.config.prior else None
         return self.render(*self.spectrum(mel, prior), prior=prior)
 
     def render(self, log_magnitude, phase, prior=None):

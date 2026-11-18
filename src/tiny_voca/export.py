@@ -95,6 +95,12 @@ class Exportable(nn.Module):
             self.register_buffer("neural_analysis_imaginary", imaginary, persistent=False)
             self.register_buffer("neural_synthesis", _synthesis_kernel(vocoder.window), persistent=False)
             self.register_buffer("neural_envelope", (vocoder.window.double() ** 2).float()[None, None].contiguous(), persistent=False)
+            if vc.prior and vc.prior_high_hz > 0:
+                # Per-voice high-band pulse share, indexed by the ``voice`` input.
+                from .vocoder import pulse_position
+                gains = [vc.high_gain(name) for name in model.config.speakers]
+                self.register_buffer("neural_voice_gain", torch.tensor(gains, dtype=torch.float32), persistent=False)
+                self.register_buffer("neural_pulse_position", pulse_position(vc), persistent=False)
         c = model.config
         v = model.vocoder
         causal = list(range(c.cep_causal))
@@ -204,7 +210,7 @@ class Exportable(nn.Module):
         return (F.conv1d(padded, self.neural_analysis_real, stride=hop),
                 F.conv1d(padded, self.neural_analysis_imaginary, stride=hop))
 
-    def _neural(self, wave, f0, voiced, total):
+    def _neural(self, wave, f0, voiced, total, voice):
         """Source-filter waveform -> Vocos log-mel -> neural vocoder (``Vocoder.forward``)."""
         v = self.neural
         vc = v.config
@@ -219,7 +225,8 @@ class Exportable(nn.Module):
             if vc.prior_high_hz > 0:
                 pulse_real, pulse_imaginary = self._stft(pulses)
                 noise_real, noise_imaginary = self._stft(noise)
-                weight = v.pulse_weight[None, :, None]
+                gain = self.neural_voice_gain[voice][:, None, None]
+                weight = 1 + (gain - 1) * self.neural_pulse_position[None, :, None]
                 prior_real, prior_imaginary = pulse_real * weight + noise_real, pulse_imaginary * weight + noise_imaginary
             else:
                 prior_real, prior_imaginary = self._stft(pulses + noise)
@@ -320,7 +327,7 @@ class Exportable(nn.Module):
         acoustic = m.acoustic_stack(prosody_hidden + m.prosody_projection(condition), frame_mask)
         f0 = (c.pitch_reference_hz * torch.exp(pitch + pitch_shift)).clamp(c.f0_min, c.f0_max)
         wave = self._vocoder(acoustic, f0, total, noise, voiced)
-        return (wave if self.neural is None else self._neural(wave, f0, voiced, total)), durations
+        return (wave if self.neural is None else self._neural(wave, f0, voiced, total, voice)), durations
 
 
 def example_inputs(length=24, vocab_size=76):
@@ -358,7 +365,9 @@ def metadata(model, checkpoint, vocoder_checkpoint=None):
     if c.emotions:
         value["emotions"] = list(c.emotions)
     if vocoder_checkpoint is not None:
-        value["vocoder_step"] = torch.load(vocoder_checkpoint, map_location="cpu", weights_only=True).get("step")
+        state = torch.load(vocoder_checkpoint, map_location="cpu", weights_only=True)
+        value["vocoder_step"] = state.get("step")
+        value["vocoder_voice_high_gain"] = state["config"].get("voice_high_gain", [])
     if profile.language != "en":
         # The full front-end rules (inventory, eSpeak canonicalisation, geminates, abbreviations),
         # so a non-Python front end can reproduce the tokens from the same table.
