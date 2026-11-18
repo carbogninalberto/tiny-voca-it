@@ -947,3 +947,6 @@ From now on decisions are made and recorded here, without waiting for approval.
   - Next voice round: add a pitch-delta loss (match the frame-to-frame change to
     the recordings) so the model learns intonation, not jitter. Also consider
     pitch_range around 1.2, since spread is about 70% of real.
+- **Tremble blind test:** the listener preferred the smoothed version on both
+  voices (EF3-S2, IT1-S1). Pitch smoothing is now the default everywhere: CLI,
+  playground, and Pages (`23e1624`).
