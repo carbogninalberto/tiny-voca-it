@@ -2,6 +2,10 @@
 # Build the static, browser-only Italian playground (GitHub Pages) into build/pages.
 #
 #   bash scripts/build_pages.sh
+#   PREVIEW_VOICE=runs/voice-gate/inference.pt PREVIEW_VOCODER=runs/vocoder-prior2/vocoder.pt bash scripts/build_pages.sh
+#
+# With PREVIEW_VOICE and PREVIEW_VOCODER, a work-in-progress model (voice model and neural
+# vocoder in one ONNX graph) is added first in the model list.
 #
 # - exports the committed Italian checkpoints (models/italian/*.pt) to ONNX + metadata;
 # - downloads the pinned eSpeak NG WebAssembly build (npm espeak-ng 1.0.2, GPL-3.0),
@@ -41,8 +45,14 @@ export PYTHONPATH=src
 for name in tiny-voca-it-IT1 tiny-voca-it-IT2-adapted; do
   "$PYTHON" -W ignore -m tiny_voca.export --checkpoint "models/italian/$name.pt" --output "$OUT/models/$name.onnx"
 done
-cat > "$OUT/models/models.json" <<'EOF'
+PREVIEW_ENTRY=""
+if [ -n "${PREVIEW_VOICE:-}" ]; then
+  "$PYTHON" -W ignore -m tiny_voca.export --checkpoint "$PREVIEW_VOICE" --vocoder "$PREVIEW_VOCODER" --output "$OUT/models/tiny-voca-it-preview.onnx"
+  PREVIEW_ENTRY='  {"id": "preview", "file": "tiny-voca-it-preview", "label": "Preview · 12 voices, emotion, neural vocoder (work in progress)", "voice": "IT1"},'
+fi
+cat > "$OUT/models/models.json" <<EOF
 [
+$PREVIEW_ENTRY
   {"id": "it1", "file": "tiny-voca-it-IT1", "label": "IT1 · Italian base"},
   {"id": "it2", "file": "tiny-voca-it-IT2-adapted", "label": "IT2 · adapted voice (28 min of data)"}
 ]

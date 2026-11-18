@@ -572,3 +572,35 @@ class EmotionTests(unittest.TestCase):
             loss, _, _ = system.objective(batch, 1.0, random_phase=False)
             loss.backward()
             self.assertGreater(float(system.model.emotions.weight.grad[1].abs().sum()), 0.0)
+
+
+class PulseGateTests(unittest.TestCase):
+    def test_soft_gate_is_off_by_default_and_attenuates_unvoiced_pulses(self):
+        from tiny_voca.model import pulse_gate
+        c = small_config()
+        self.assertNotIn("unvoiced_pulse_gain", c.to_dict())
+        gated = dataclasses.replace(c, unvoiced_pulse_gain=0.5)
+        self.assertEqual(set(gated.branch_differences(c)), {"unvoiced_pulse_gain"})
+        with self.assertRaisesRegex(ValueError, "unvoiced_pulse_gain"):
+            dataclasses.replace(c, unvoiced_pulse_gain=1.5)
+        voiced = torch.tensor([[1.0] * 40 + [0.0] * 40 + [1.0] * 40])
+        gate = pulse_gate(voiced, c.hop, 0.5)
+        self.assertEqual(gate.shape, (1, 120 * c.hop))
+        self.assertAlmostEqual(float(gate[0, 60 * c.hop]), 0.5, places=4)          # middle of the unvoiced stretch
+        self.assertAlmostEqual(float(gate[0, 20 * c.hop]), 1.0, places=4)
+        self.assertTrue(bool((gate[0, 38 * c.hop:42 * c.hop].diff() <= 1e-6).all()))   # a soft, monotone fade
+        torch.manual_seed(0)
+        plain, soft = TinyVoca(c).eval(), TinyVoca(gated).eval()
+        soft.load_state_dict(plain.state_dict())
+        with torch.no_grad():
+            for layer in (plain.vocoder.harmonic, soft.vocoder.harmonic):
+                torch.manual_seed(1); layer.weight.normal_(std=0.05)
+        hidden = torch.randn(1, 120, c.channels); f0 = torch.full((1, 120), 150.0); lengths = torch.tensor([120])
+        noise = torch.zeros(1, 120 * c.hop)                                        # pulses only
+        with torch.no_grad():
+            a = plain.vocoder(hidden, f0, lengths, noise=noise, voiced=voiced)
+            b = soft.vocoder(hidden, f0, lengths, noise=noise, voiced=voiced)
+            ungated = soft.vocoder(hidden, f0, lengths, noise=noise)                # no voicing given: unchanged
+        middle = slice(55 * c.hop, 65 * c.hop)
+        self.assertAlmostEqual(float(b[0, middle].square().mean() / a[0, middle].square().mean()), 0.25, delta=0.05)
+        torch.testing.assert_close(ungated, a)

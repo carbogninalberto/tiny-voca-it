@@ -16,7 +16,7 @@ BRANCHABLE_FIELDS = frozenset({"channels", "heads", "feedforward", "kernel", "en
                                "dropout", "predictor_channels", "speakers", "max_tokens", "max_frames", "max_parameters",
                                "excitation_jitter", "postfilter_channels", "postfilter_blocks",
                                "head_channels", "head_blocks", "vocos_mels",
-                               "vocos_mel_loss", "emotions"})
+                               "vocos_mel_loss", "emotions", "unvoiced_pulse_gain"})
 
 
 @dataclass(frozen=True)
@@ -59,6 +59,12 @@ class Config:
     # a real voice between 1 and 5 kHz, which is heard as buzz; this jitter
     # spreads the upper harmonics the way cycle-to-cycle irregularity does.
     excitation_jitter: float = 0.0
+    # Share of the pulse train kept in unvoiced frames (1 = always on, the original
+    # behaviour). Without a gate the model learned to build /s/, /f/, /ʃ/ from pulses
+    # (a periodic hiss); a soft gate (e.g. 0.5, with a ~25 ms fade) moves them to the
+    # noise branch, as in real speech. Uses recorded voicing in training and the
+    # predicted voicing at synthesis.
+    unvoiced_pulse_gain: float = 1.0
     # Learned spectral post-filter on the source-filter output (0 = none): 2D
     # ConvNeXt blocks over the (frequency, time) STFT of the synthesis predict a
     # complex correction per bin, for the phase spread and harmonic fine structure
@@ -120,6 +126,8 @@ class Config:
             raise ValueError("head_channels must be >= 0, head_blocks >= 1 and head_fft a multiple (>= 2) of hop")
         if self.postfilter_channels < 0 or self.postfilter_blocks < 1:
             raise ValueError("postfilter_channels must be >= 0 and postfilter_blocks >= 1")
+        if not 0 <= self.unvoiced_pulse_gain <= 1:
+            raise ValueError("unvoiced_pulse_gain must be between 0 and 1")
         if not 0 <= self.excitation_jitter <= 0.2:
             raise ValueError("excitation_jitter must be between 0 and 0.2")
         if min(self.mel_scale, self.energy_scale) <= 0 or not 0 < self.harmonic_limit < 0.5:
@@ -198,4 +206,5 @@ class Config:
 OMITTED_AT_DEFAULT = {"language": "en", "max_parameters": 5_000_000, "excitation_jitter": 0.0,
                       "postfilter_channels": 0, "postfilter_blocks": 2,
                       "head_channels": 0, "head_blocks": 3, "head_fft": 1024,
-                      "vocos_mels": 0, "vocos_mel_loss": 0.0, "emotions": ()}
+                      "vocos_mels": 0, "vocos_mel_loss": 0.0, "emotions": (),
+                      "unvoiced_pulse_gain": 1.0}

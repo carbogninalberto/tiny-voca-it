@@ -121,7 +121,7 @@ class TrainingSystem(nn.Module):
         mel_target = (batch["mel"] - c.mel_mean) / c.mel_scale
         mel_head = masked_mean((self.mel_head(acoustic).float() - mel_target).abs().mean(-1), frame_mask)
         phase = 2 * math.pi * torch.rand(len(lengths), device=lengths.device) if random_phase else None
-        wave = m.vocoder(acoustic, m.frequency(target[..., 0]), lengths, phase=phase)
+        wave = m.vocoder(acoustic, m.frequency(target[..., 0]), lengths, phase=phase, voiced=target[..., 1])
         stft, mel = self.spectral(wave, batch["wave"], lengths * c.hop)
         terms = dict(duration=duration, pause=pause, pitch=pitch, pitch_spread=pitch_spread, voicing=voicing, energy=energy,
                      mel_head=mel_head, stft=stft, mel=mel)

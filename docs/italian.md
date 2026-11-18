@@ -320,3 +320,11 @@ Checks:
   The model was trained on 1.51 tokens; the drift is small and mostly a correction.
 - Headless Chromium end to end: both voices speak, phonemes equal Python's for the
   test sentences, 9–12× real time in a single wasm thread, no console errors.
+
+**Preview model (18 November).** With `PREVIEW_VOICE` and `PREVIEW_VOCODER` set,
+the build also exports a work-in-progress model, first in the list: the 12-voice
+emotional voice model (soft pulse gate) with the neural vocoder in the same ONNX
+graph (43 MB). The page then shows speaker and emotion controls (read from the model
+metadata) and the voice and vocoder steps. Checked with ONNX Runtime Web 1.20.1 (wasm,
+one thread, in Node): identical durations to PyTorch, audio equal up to the random
+excitation, 7.7× real time.

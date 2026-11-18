@@ -89,9 +89,13 @@ class Vocoder(nn.Module):
 
     def spectrum(self, mel, prior=None):
         """mel [B, bands, frames] -> (log magnitude, phase or phase correction), each [B, bins, frames]."""
+        return self.spectrum_from_log_prior(mel, torch.log(prior.abs() + 1e-5) if self.config.prior else None)
+
+    def spectrum_from_log_prior(self, mel, log_prior=None):
+        """``spectrum`` given the prior's log magnitude [B, bins, frames] instead of its complex STFT."""
         x = self.embed(mel)
         if self.config.prior:
-            x = x + self.prior_in(torch.log(prior.abs() + 1e-5))
+            x = x + self.prior_in(log_prior)
         x = self.norm(x.transpose(1, 2)).transpose(1, 2)
         for block in self.blocks:
             x = block(x)

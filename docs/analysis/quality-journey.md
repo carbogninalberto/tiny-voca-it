@@ -274,6 +274,65 @@ for now".
 It is now slightly on the regular side, much closer to the real voice than the
 metallic plain vocoder.
 
+### 6.3 Where the metallic trace lives (blind listening, 18 November)
+
+All tests were blind and used two aligned test clips (IT1 and CML4974, with the
+recording's pitch and timing) voiced by the frozen prior vocoder at 150k.
+
+- **Band swaps:**
+  - model + real 1–6 kHz: not clean;
+  - model + real **above 1 kHz**: best hybrid ("clean, almost; clear");
+  - model + real below 1 kHz: unchanged.
+
+  So the trace is above 1 kHz.
+- **Envelope vs texture:**
+  - the real fine texture helped IT1;
+  - the real envelope helped CML4974 a little.
+
+  Both matter, depending on the voice.
+- **Residual mel correction** (`MelCorrection`, 29k params, L1, 5k and 15k steps):
+  error above 1 kHz 0.599 → 0.577 → 0.572; **no audible change**. An average-error
+  objective can't create irregular texture.
+- **Capping the intermediate pulse train** at 6, 4 or 2.5 kHz: no better (IT1
+  slightly worse). The regularity of the high harmonics is not what is heard.
+- **Spectrogram comparison** (real vs model, active frames, IT1):
+  - below 1 kHz the detail matches (0.61 / 0.58);
+  - above 1 kHz the model is **airbrushed**: fine detail across bands is 0.28 / 0.18
+    at 1–3 kHz, 0.21 / 0.06 at 3–6 kHz and 0.33 / 0.15 at 6–12 kHz; frame-to-frame
+    change is 25–35% lower.
+  - Also visible: an edge at about 11.3 kHz (the pulse-train limit), and pulses
+    leaking into silence.
+- **Voicing gate without retraining:** the /s/, /f/, /ʃ/ hisses vanished. **The
+  model had learned to build them from the pulse train** (a periodic "hiss")
+  instead of from noise.
+  - A soft gate keeping 50% or 25% of the pulse energy in unvoiced frames, with a
+    25 ms fade, was judged "some good".
+
+**Round 3** (`logs/round3.sh`, started about 03:30, 18 November):
+
+1. **Adversarial pilot:** the existing waveform discriminators on the voice model,
+   103k → 113k (`runs/voice-adv-pilot`).
+2. **Soft-gated fine-tune:** new `Config.unvoiced_pulse_gain` = 0.5, using recorded
+   voicing in training and predicted voicing at synthesis (exported to ONNX too),
+   with light adversarial training (ratio 0.5), 113k → 128k (`runs/voice-gate`).
+3. **New vocoder pairs** from the gated model, built on the GPU
+   (`data/vocoder-pairs-gate`).
+4. **Prior vocoder resumed** on them, 150k → 180k (`runs/vocoder-prior2`).
+
+Blind comparison files are built at the end of each stage.
+
+**Progress (08:10, 18 November):**
+
+- **Adversarial pilot:** done at 03:42. The spectrogram error rose slightly, 0.743 →
+  0.757, as expected when trading average accuracy for realism.
+- **Gated fine-tune:** done at 05:05, error 0.750 (no cost from the gate).
+- **Pairs:** rebuilt on the GPU in 15 minutes.
+- **Vocoder:** the error on real test recordings keeps falling: 0.203 at 150k, 0.192
+  at 165k.
+- **Browser preview:** the gated model with the 168k vocoder is published on GitHub
+  Pages.
+- **Listening verdicts** on the A and G files are still pending.
+
 **Pilot: direct spectrogram instead of the DSP route (rejected).**
 
 - **Setup:** the voice model got a 100-band Vocos-mel output (`vocos_mels=100`),

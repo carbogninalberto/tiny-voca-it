@@ -56,6 +56,7 @@ button{font:inherit;padding:9px 18px;border-radius:8px;border:0;background:var(-
 <label>Voce<select id="voice"></select></label>
 <label>Velocità <span id="speedv">1.00</span><input id="speed" type="range" min="0.7" max="1.4" step="0.05" value="1"></label>
 <label>Intonazione <span id="rangev">1.00</span><input id="range" type="range" min="0.6" max="1.8" step="0.05" value="1"></label>
+<label id="corrbox" style="display:none;flex-direction:row;align-items:center;gap:6px"><input id="corr" type="checkbox"> Correzione mel <span id="corrv"></span></label>
 <label id="emobox" style="display:none">Emozione<select id="emotion"></select></label>
 <label id="intbox" style="display:none">Intensità <span id="intv">0.70</span><input id="intensity" type="range" min="0" max="1" step="0.05" value="0.7"></label>
 <button id="go">Parla</button></div></div>
@@ -74,13 +75,14 @@ async function info(){const r=await fetch('info');const j=await r.json();
  const ce=$('emotion').value;$('emotion').innerHTML='';for(const e of (j.emotions||[])){const o=document.createElement('option');o.value=e;o.textContent=it[e]||e;$('emotion').append(o)}
  if((j.emotions||[]).includes(ce))$('emotion').value=ce;
  $('emobox').style.display=$('intbox').style.display=(j.emotions||[]).length?'':'none';
+ $('corrbox').style.display=j.correction_step!=null?'flex':'none';$('corrv').textContent=j.correction_step!=null?`(pilot, ${j.correction_step} steps)`:'';
  const cur=$('voice').value;$('voice').innerHTML='';for(const v of j.voices){const o=document.createElement('option');o.value=v;o.textContent=v;$('voice').append(o)}
  if(j.voices.includes(cur))$('voice').value=cur}
 $('speed').oninput=()=>$('speedv').textContent=Number($('speed').value).toFixed(2);
 $('range').oninput=()=>$('rangev').textContent=Number($('range').value).toFixed(2);
 $('intensity').oninput=()=>$('intv').textContent=Number($('intensity').value).toFixed(2);
 $('sample').onchange=()=>{if($('sample').value!=='')$('text').value=SAMPLES[$('sample').value]};
-async function say(text,tag,autoplay){const body={text,vocoder:$('vocoder').value,voice:$('voice').value,speed:Number($('speed').value),pitch_range:Number($('range').value),emotion:$('emotion').value||null,intensity:Number($('intensity').value)};
+async function say(text,tag,autoplay){const body={text,vocoder:$('vocoder').value,voice:$('voice').value,speed:Number($('speed').value),pitch_range:Number($('range').value),emotion:$('emotion').value||null,intensity:Number($('intensity').value),correction:$('corr').checked};
  const r=await fetch('synth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
  if(!r.ok)throw new Error(await r.text());const blob=await r.blob();
  const d=document.createElement('div');d.className='take';
@@ -127,6 +129,20 @@ class Engine:
             self.model_key, self.model_step = key, state.get("step")
         return self.model
 
+    def current_correction(self):
+        """Optional residual mel correction (scripts/pilot_mel_correction.py), re-read when it changes."""
+        path = Path("runs/mel-correction-pilot/correction.pt")
+        if not path.exists():
+            return None
+        mtime = path.stat().st_mtime
+        if mtime != getattr(self, "correction_mtime", None):
+            from tiny_voca.model import MelCorrection
+            state = torch.load(path, map_location="cpu", weights_only=True)
+            module = MelCorrection(state["channels"], low_hz=state["low_hz"])
+            module.load_state_dict(state["correction"])
+            self.correction, self.correction_mtime, self.correction_step = module.eval(), mtime, state.get("steps")
+        return self.correction
+
     def current_vocoder(self):
         path = next((p for p in self.vocoder_paths if p.exists()), None)
         if path is None:
@@ -150,9 +166,10 @@ class Engine:
                 "model_name": Path(self.model_key[0]).parent.name, "emotions": list(model.config.emotions), "voices": list(model.config.speakers), "vocoders": vocoders,
                 "vocoder_step": self.vocoder_step,
                 "vocoder_updated": time.strftime("%H:%M", time.localtime(self.vocoder_mtime[1])) if self.vocoder_mtime else None,
-                "vocoder_name": getattr(self, "vocoder_name", None)}
+                "vocoder_name": getattr(self, "vocoder_name", None),
+                "correction_step": self.correction_step if self.current_correction() is not None else None}
 
-    def synthesize(self, text, voice, vocoder, speed, pitch_range=1.0, emotion=None, intensity=0.0):
+    def synthesize(self, text, voice, vocoder, speed, pitch_range=1.0, emotion=None, intensity=0.0, correction=False):
         with self.lock, torch.no_grad():
             start = time.time()
             model = self.current_model()
@@ -162,6 +179,10 @@ class Engine:
             detail = "source-filter"
             if vocoder in ("ours", "vocos"):
                 mel = self.features(wave[None])
+                corrector = self.current_correction() if correction else None
+                if corrector is not None and corrector.project.in_features == model.config.channels + mel.shape[-1]:
+                    frames = wave.shape[-1] // model.config.hop
+                    mel = corrector(details["acoustic"][:, :frames].float(), mel[:, :frames + 1])
                 if vocoder == "ours":
                     ours = self.current_vocoder()
                     if ours.config.prior:
@@ -181,6 +202,8 @@ class Engine:
             audio = wave.numpy()
             seconds = time.time() - start
             emotional = f", {emotion} {intensity:.2f}" if emotion else ""
+            if correction and vocoder in ("ours", "vocos") and self.current_correction() is not None:
+                emotional += f", mel correction {self.correction_step}"
             detail = f"voice {self.model_step / 1000:g}k, " + detail + emotional + f", intonation {pitch_range:.2f}, {len(audio) / 24000:.1f}s audio in {seconds:.2f}s"
             audio = audio / max(1e-6, float(np.abs(audio).max())) * 0.8
             buffer = io.BytesIO()
@@ -225,7 +248,8 @@ def handler_for(engine):
                 speed = min(1.5, max(0.6, float(request.get("speed", 1.0))))
                 pitch_range = min(2.0, max(0.5, float(request.get("pitch_range", 1.0))))
                 intensity = min(1.0, max(0.0, float(request.get("intensity") or 0.0)))
-                audio, detail = engine.synthesize(text, request.get("voice"), vocoder, speed, pitch_range, request.get("emotion"), intensity)
+                audio, detail = engine.synthesize(text, request.get("voice"), vocoder, speed, pitch_range, request.get("emotion"), intensity,
+                                                  bool(request.get("correction")))
                 self._send(200, audio, "audio/wav", {"X-Detail": detail})
             except Exception as error:      # report to the page instead of dropping the connection
                 self._send(400, str(error).encode(), "text/plain; charset=utf-8")

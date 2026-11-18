@@ -87,7 +87,11 @@
     </section>
 
     <aside class="panel">
-      <div class="control"><label for="model">Voice</label><select id="model"></select></div>
+      <div class="control"><label for="model">Model</label><select id="model"></select></div>
+      <div class="control" id="speaker-box" hidden><label for="speaker">Speaker</label><select id="speaker"></select></div>
+      <div class="control" id="emotion-box" hidden><label for="emotion">Emotion</label><select id="emotion"></select></div>
+      <div class="control" id="intensity-box" hidden><label for="intensity">Emotion intensity <output id="intensity-out">0.00</output></label>
+        <input type="range" id="intensity" min="0" max="1.5" step="0.05" value="0"></div>
       <div class="control"><label for="speed">Speed <output id="speed-out">1.00×</output></label>
         <input type="range" id="speed" min="0.6" max="1.6" step="0.05" value="1"></div>
       <div class="control"><label for="pitch">Pitch <output id="pitch-out">0 st</output></label>
@@ -103,6 +107,10 @@
   <section class="about">
     <h2>About the voices</h2>
     <ul>
+      <li><b>Preview</b>: the work in progress on branch <code>neural-vocoder-emotion</code>. A 4.5M-parameter voice model
+        trained on 12 Italian voices plus emotional speech, with a 2.2M-parameter neural vocoder that turns its spectrogram
+        into audio (6.8M parameters in total, all running in your browser). Choose the reader under <i>Speaker</i>; the
+        emotion input is experimental and works best on the EF/EM voices.</li>
       <li><b>IT1</b>: the Italian base model, trained for 100k steps on 11.4 hours of one CML-TTS reader.
         On held-out test sentences Whisper transcribes it with 7.1% word errors (the original recordings: 9.1%).</li>
       <li><b>IT2</b>: the same model adapted to a different reader with only 28 minutes of audio, the custom-voice fine-tuning demo.</li>
@@ -137,7 +145,8 @@ const SAMPLES = [
   ["Bar", "Buongiorno, vorrei un cappuccino e un cornetto, per favore."],
 ];
 const $ = (id) => document.getElementById(id);
-const controls = { speed: [1, v => `${(+v).toFixed(2)}×`], pitch: [0, v => `${v > 0 ? "+" : ""}${v} st`], range: [1, v => (+v).toFixed(2)] };
+const controls = { speed: [1, v => `${(+v).toFixed(2)}×`], pitch: [0, v => `${v > 0 ? "+" : ""}${v} st`], range: [1, v => (+v).toFixed(2)],
+                   intensity: [0, v => (+v).toFixed(2)] };
 let models = [], ready = false, request = 0, pending = null;
 const worker = new Worker("worker.js", { type: "module" });
 
@@ -172,8 +181,12 @@ function speak() {
   const text = $("text").value.trim();
   if (!text) return showError("Scrivi un testo.");
   showError("");
-  pending = { id: ++request, text, model: selected(), speed: +$("speed").value, pitch: +$("pitch").value, range: +$("range").value };
+  pending = { id: ++request, text, model: selected(), speed: +$("speed").value, pitch: +$("pitch").value, range: +$("range").value,
+              voice: +($("speaker").value || 0), emotion: +($("emotion").value || 0),
+              intensity: $("emotion-box").hidden ? 0 : +$("intensity").value };
   $("speak").disabled = true; $("speak").textContent = "…";
+  pending.speakerName = $("speaker-box").hidden ? "" : $("speaker").selectedOptions[0]?.textContent;
+  pending.emotionName = $("emotion-box").hidden ? "" : $("emotion").selectedOptions[0]?.textContent;
   worker.postMessage({ type: "speak", ...pending, model: undefined });
 }
 
@@ -199,7 +212,7 @@ function addTake(job, data) {
   take.innerHTML = `<div class="text"></div><audio controls autoplay></audio>
     <div class="facts"><span>${job.model.label}</span><span>${seconds.toFixed(2)}s audio</span>
     <span>${(data.totalTime / 1000).toFixed(2)}s in browser (${Math.round(seconds / (data.totalTime / 1000))}× real time)</span>
-    <span>speed ${job.speed} · pitch ${job.pitch} st · intonation ${job.range}</span><a download="tiny-voca-it.wav">download</a></div>
+    <span>${job.speakerName ? job.speakerName + " · " : ""}${job.emotionName && job.intensity > 0 ? job.emotionName + " " + job.intensity + " · " : ""}speed ${job.speed} · pitch ${job.pitch} st · intonation ${job.range}</span><a download="tiny-voca-it.wav">download</a></div>
     <details><summary>phonemes</summary><pre></pre></details>`;
   take.querySelector(".text").textContent = job.text;
   take.querySelector("audio").src = url;
@@ -210,7 +223,17 @@ function addTake(job, data) {
 
 worker.onmessage = ({ data }) => {
   if (data.type === "status") setStatus(data.text, data.progress);
-  else if (data.type === "ready") { ready = true; $("speak").disabled = false; setStatus(`Ready · ${selected().label} · step ${data.step}`); }
+  else if (data.type === "ready") {
+    ready = true; $("speak").disabled = false;
+    setStatus(`Ready · ${selected().label} · voice ${Math.round(data.step / 1000)}k steps` + (data.vocoderStep ? ` · vocoder ${Math.round(data.vocoderStep / 1000)}k` : ""));
+    const keep = $("speaker").selectedOptions[0]?.textContent;
+    $("speaker").replaceChildren(...data.voices.map((v, i) => new Option(v, i)));
+    const preferred = data.voices.indexOf(keep) >= 0 ? keep : (selected().voice || data.voices[0]);
+    $("speaker").value = String(Math.max(0, data.voices.indexOf(preferred)));
+    $("speaker-box").hidden = data.voices.length < 2;
+    $("emotion").replaceChildren(...data.emotions.map((e, i) => new Option(e, i)));
+    $("emotion-box").hidden = $("intensity-box").hidden = !data.emotions.length;
+  }
   else if (data.type === "sentence") setStatus(`Speaking… sentence ${data.index + 1} / ${data.total}`);
   else if (data.type === "done") {
     const job = pending; pending = null;

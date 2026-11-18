@@ -4,6 +4,10 @@
 
 The exported graph speaks one utterance: phoneme ids and stress in, waveform
 out. Text is turned into ids outside the graph (``tiny_voca.text.phonemize``).
+With ``--vocoder``, the neural vocoder is part of the same graph: the
+source-filter waveform is analysed into the Vocos log-mel spectrogram and the
+vocoder (with its pulse-train prior, from the model's own pitch and voicing)
+renders the final audio, all with convolution STFTs.
 
 ``Exportable`` computes the same audio as ``TinyVoca.synthesize`` for a single
 utterance, written with operations ONNX has: the short-time Fourier transforms
@@ -18,6 +22,8 @@ Inputs
     speed        float32 [1]    1.0 = as predicted, larger is faster
     pitch_shift  float32 [1]    added to log F0 (0.058 is about a semitone)
     pitch_range  float32 [1]    scales pitch movement around the mean
+    emotion      int64 [1]      index into ``emotions`` (only for models with an emotion input)
+    intensity    float32 [1]    0 = neutral (only with ``emotion``)
 Outputs
     audio        float32 [1, samples]
     durations    int64 [1, N]   frames per token (``hop`` samples each)
@@ -33,10 +39,13 @@ from torch import nn
 import torch.nn.functional as F
 
 from .infer import load_model, match_frontend
-from .model import COMPRESSION, jitter_offset
+from .model import COMPRESSION, jitter_offset, pulse_gate
+from .losses import VocosMel
 from .text import frontend_fingerprint, frontend_identity
+from .vocoder import load_vocoder
 
 INPUTS = ("tokens", "stress", "voice", "speed", "pitch_shift", "pitch_range")
+EMOTION_INPUTS = ("emotion", "intensity")
 OUTPUTS = ("audio", "durations")
 
 
@@ -69,10 +78,23 @@ def _synthesis_kernel(window):
 class Exportable(nn.Module):
     """Single-utterance synthesis in ONNX-friendly operations."""
 
-    def __init__(self, model, external_noise=False):
+    def __init__(self, model, external_noise=False, vocoder=None):
         super().__init__()
         self.model = model
         self.external_noise = external_noise
+        self.emotional = model.emotions is not None
+        self.neural = vocoder
+        if vocoder is not None:
+            vc = vocoder.config
+            if vc.sample_rate != model.config.sample_rate:
+                raise ValueError("the vocoder and the voice model use different sample rates")
+            mel = VocosMel(vc.sample_rate, vc.fft, vc.hop, vc.bands)
+            self.register_buffer("mel_filters", mel.filters, persistent=False)
+            real, imaginary = _analysis_kernels(vocoder.window)
+            self.register_buffer("neural_analysis_real", real, persistent=False)
+            self.register_buffer("neural_analysis_imaginary", imaginary, persistent=False)
+            self.register_buffer("neural_synthesis", _synthesis_kernel(vocoder.window), persistent=False)
+            self.register_buffer("neural_envelope", (vocoder.window.double() ** 2).float()[None, None].contiguous(), persistent=False)
         c = model.config
         v = model.vocoder
         causal = list(range(c.cep_causal))
@@ -110,7 +132,7 @@ class Exportable(nn.Module):
         angle = cepstrum @ imaginary
         return magnitude * torch.cos(angle), magnitude * torch.sin(angle)
 
-    def _pulses(self, f0, log_offset=None):
+    def _pulses(self, f0, log_offset=None, limit=None):
         """``pulse_train`` for one utterance, without 64-bit floats (the web
         runtime has none). The phase is summed inside each frame in float32,
         where it stays below a few cycles, and across frames as 24-bit integer
@@ -130,7 +152,7 @@ class Exportable(nn.Module):
         cycles = within + start[:, :, None]
         theta = (2 * math.pi * (cycles - torch.floor(cycles))).reshape(1, -1)
         frequency = frequency.reshape(1, -1)
-        harmonics = (c.harmonic_limit * c.sample_rate / frequency).clamp_min(1.0)
+        harmonics = ((c.harmonic_limit if limit is None else limit) * c.sample_rate / frequency).clamp_min(1.0)
         whole = torch.floor(harmonics)
         denominator = 2 * torch.sin(theta / 2)
         tiny = denominator.abs() < 1e-6
@@ -138,7 +160,7 @@ class Exportable(nn.Module):
         wave = core + (harmonics - whole) * torch.cos((whole + 1) * theta)
         return wave * torch.sqrt(2.0 / harmonics)
 
-    def _vocoder(self, hidden, f0, total, noise):
+    def _vocoder(self, hidden, f0, total, noise, voiced=None):
         c = self.model.config
         v = self.model.vocoder
         last = total - 1
@@ -168,10 +190,48 @@ class Exportable(nn.Module):
             noise = noise.index_select(1, torch.arange(c.hop * total, device=hidden.device))
         offset = jitter_offset(noise, c.excitation_jitter) if c.excitation_jitter > 0 else None
         pulses = self._pulses(f0, offset)
+        if c.unvoiced_pulse_gain < 1 and voiced is not None:
+            pulses = pulses * pulse_gate(voiced, c.hop, c.unvoiced_pulse_gain)
         wave = (self._filter(pulses, harmonic_real, harmonic_imaginary, "synth", c.synth_fft, c.synth_hop)
                 + self._filter(noise, noise_real, noise_imaginary, "noise", c.noise_fft, c.noise_hop))
         wave = wave if v.postfilter is None else self._postfilter(wave, hidden, total)
         return wave if v.head is None else self._head(wave, hidden, total)
+
+    def _stft(self, wave):
+        """Centred, reflection-padded STFT (as torch.stft) -> real, imaginary [1, bins, samples // hop + 1]."""
+        fft, hop = self.neural.config.fft, self.neural.config.hop
+        padded = F.pad(wave[:, None], (fft // 2, fft // 2), mode="reflect")
+        return (F.conv1d(padded, self.neural_analysis_real, stride=hop),
+                F.conv1d(padded, self.neural_analysis_imaginary, stride=hop))
+
+    def _neural(self, wave, f0, voiced, total):
+        """Source-filter waveform -> Vocos log-mel -> neural vocoder (``Vocoder.forward``)."""
+        v = self.neural
+        vc = v.config
+        real, imaginary = self._stft(wave)
+        mel = torch.log((self.mel_filters @ torch.sqrt(real * real + imaginary * imaginary)).clamp_min(1e-7))
+        log_prior = None
+        if vc.prior:
+            samples = wave.shape[1]
+            gate = F.interpolate(voiced[:, None], size=samples, mode="linear", align_corners=False)[:, 0]
+            source = self._pulses(f0.clamp(40, 1000), limit=0.47) * gate + vc.prior_noise * torch.randn_like(wave)
+            prior_real, prior_imaginary = self._stft(source)
+            prior_magnitude = torch.sqrt(prior_real * prior_real + prior_imaginary * prior_imaginary)
+            log_prior = torch.log(prior_magnitude + 1e-5)
+        log_magnitude, phase = v.spectrum_from_log_prior(mel, log_prior)
+        magnitude = torch.exp(log_magnitude).clamp(max=1e2)
+        cos, sin = torch.cos(phase), torch.sin(phase)
+        if vc.prior:
+            # Rotate the prior's unit phasor by the predicted correction (no atan2 needed).
+            zero = prior_magnitude == 0
+            unit_real = torch.where(zero, torch.ones_like(prior_real), prior_real / torch.where(zero, torch.ones_like(prior_magnitude), prior_magnitude))
+            unit_imaginary = torch.where(zero, torch.zeros_like(prior_imaginary), prior_imaginary / torch.where(zero, torch.ones_like(prior_magnitude), prior_magnitude))
+            cos, sin = unit_real * cos - unit_imaginary * sin, unit_real * sin + unit_imaginary * cos
+        spectrum = torch.cat((magnitude * cos, magnitude * sin), dim=1)
+        out = F.conv_transpose1d(spectrum, self.neural_synthesis, stride=vc.hop)
+        envelope = F.conv_transpose1d(torch.ones_like(magnitude[:, :1]), self.neural_envelope, stride=vc.hop)
+        fft = vc.fft
+        return (out / envelope)[:, 0, fft // 2:fft // 2 + total * vc.hop]
 
     def _head(self, wave, hidden, total):
         """``SpectralHead`` for one utterance with convolution STFTs (same frames
@@ -211,11 +271,17 @@ class Exportable(nn.Module):
         envelope = F.conv_transpose1d(torch.ones_like(real[:, :1]), self.synth_envelope, stride=hop)
         return (out / envelope)[:, 0, fft // 2:fft // 2 + samples]
 
-    def forward(self, tokens, stress, voice, speed, pitch_shift, pitch_range, noise=None):
+    def forward(self, tokens, stress, voice, speed, pitch_shift, pitch_range, *extra):
         m = self.model
         c = m.config
+        if self.emotional:
+            emotion, intensity, *extra = extra
+        noise = extra[0] if extra else None
         token_mask = torch.ones_like(tokens, dtype=torch.bool)
-        hidden = m.encoder(m.tokens(tokens) + m.stress(stress) + m.voices(voice)[:, None], token_mask)
+        x = m.tokens(tokens) + m.stress(stress) + m.voices(voice)[:, None]
+        if self.emotional:
+            x = x + (m.emotions(emotion) * intensity[:, None])[:, None]
+        hidden = m.encoder(x, token_mask)
         # Durations.
         output = m.duration(hidden, token_mask)
         frames = torch.round((torch.exp(output[..., 0].clamp(0, math.log1p(400))) - 1) / speed).long().clamp_min(1)
@@ -232,6 +298,8 @@ class Exportable(nn.Module):
         features = torch.stack((relative, 1 - relative, torch.log1p(owned.to(hidden.dtype)) / 4), dim=-1)
         expanded = hidden.gather(1, index[..., None].expand(-1, -1, hidden.shape[-1]))
         expanded = expanded + m.frame_position(features) + m.frame_voices(voice)[:, None]
+        if self.emotional:
+            expanded = expanded + (m.frame_emotions(emotion) * intensity[:, None])[:, None]
         frame_mask = torch.ones_like(frame, dtype=torch.bool)
         # Pitch, voicing, energy.
         prosody_hidden = m.prosody_stack(expanded, frame_mask)
@@ -244,7 +312,8 @@ class Exportable(nn.Module):
         condition = torch.stack((pitch.clamp(-2.0, 1.5), voiced, prosody[..., 2].clamp(-4.5, 3.0)), dim=-1)
         acoustic = m.acoustic_stack(prosody_hidden + m.prosody_projection(condition), frame_mask)
         f0 = (c.pitch_reference_hz * torch.exp(pitch + pitch_shift)).clamp(c.f0_min, c.f0_max)
-        return self._vocoder(acoustic, f0, total, noise), durations
+        wave = self._vocoder(acoustic, f0, total, noise, voiced)
+        return (wave if self.neural is None else self._neural(wave, f0, voiced, total)), durations
 
 
 def example_inputs(length=24, vocab_size=76):
@@ -253,10 +322,13 @@ def example_inputs(length=24, vocab_size=76):
     return tokens, torch.zeros_like(tokens), torch.tensor([0]), one(1.0), one(0.0), one(1.0)
 
 
-def export(model, path, external_noise=False, opset=17):
-    wrapper = Exportable(model, external_noise).eval()
+def export(model, path, external_noise=False, opset=17, vocoder=None):
+    wrapper = Exportable(model, external_noise, vocoder).eval()
     inputs = example_inputs(vocab_size=model.config.vocab_size)
     names = list(INPUTS)
+    if wrapper.emotional:
+        inputs = (*inputs, torch.tensor([0]), torch.tensor([0.0]))
+        names += list(EMOTION_INPUTS)
     axes = {"tokens": {1: "tokens"}, "stress": {1: "tokens"}, "audio": {1: "samples"}, "durations": {1: "tokens"}}
     if external_noise:
         inputs = (*inputs, torch.randn(1, model.config.hop * model.config.max_frames))
@@ -268,14 +340,18 @@ def export(model, path, external_noise=False, opset=17):
     return path
 
 
-def metadata(model, checkpoint):
+def metadata(model, checkpoint, vocoder_checkpoint=None):
     c = model.config
     state = torch.load(checkpoint, map_location="cpu", weights_only=True)
     profile = c.profile
     value = {"sample_rate": c.sample_rate, "hop": c.hop, "voices": list(c.speakers), "symbols": list(profile.symbols),
              "max_tokens": c.max_tokens, "max_frames": c.max_frames, "step": state.get("step"),
              "frontend": frontend_identity(profile).get("phonemizer", "espeak"), "frontend_fingerprint": frontend_fingerprint(profile),
-             "inputs": list(INPUTS), "outputs": list(OUTPUTS)}
+             "inputs": list(INPUTS) + (list(EMOTION_INPUTS) if c.emotions else []), "outputs": list(OUTPUTS)}
+    if c.emotions:
+        value["emotions"] = list(c.emotions)
+    if vocoder_checkpoint is not None:
+        value["vocoder_step"] = torch.load(vocoder_checkpoint, map_location="cpu", weights_only=True).get("step")
     if profile.language != "en":
         # The full front-end rules (inventory, eSpeak canonicalisation, geminates, abbreviations),
         # so a non-Python front end can reproduce the tokens from the same table.
@@ -291,12 +367,14 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--external-noise", action="store_true", help="Take the noise signal as an input (for exact comparisons)")
     parser.add_argument("--opset", type=int, default=17)
+    parser.add_argument("--vocoder", type=Path, help="Neural vocoder checkpoint to include in the graph")
     args = parser.parse_args()
     match_frontend(args.checkpoint)
     model = load_model(args.checkpoint, "cpu")
+    vocoder = load_vocoder(args.vocoder) if args.vocoder else None
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    export(model, args.output, args.external_noise, args.opset)
-    args.output.with_suffix(".json").write_text(json.dumps(metadata(model, args.checkpoint), ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    export(model, args.output, args.external_noise, args.opset, vocoder)
+    args.output.with_suffix(".json").write_text(json.dumps(metadata(model, args.checkpoint, args.vocoder), ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     print(f"wrote {args.output} ({args.output.stat().st_size / 1e6:.1f} MB) and {args.output.with_suffix('.json').name}")
 
 

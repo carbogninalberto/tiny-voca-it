@@ -150,8 +150,16 @@ so the training environment's `transformers` and `torch` stay untouched.
 - **Speed (measured, PyTorch, 2 CPU threads, GPU training at the same time):** 8.9
   s of speech in 0.51 s, about 0.06× real time.
 - **Export:** the ONNX export covers the voice model, including the source-filter
-  heads, the optional post-filter and the spectral head. The neural vocoder isn't
-  exported yet, so the browser playground still uses the old DSP output.
+  heads, the soft pulse gate, the optional post-filter and the spectral head, and the
+  emotion inputs (`emotion`, `intensity`) for models that have them. With
+  `--vocoder`, the neural vocoder is in the same graph: the Vocos log-mel and the
+  pulse-train prior are computed with convolution STFTs, and the prior phase is
+  rotated by the predicted correction without `atan2`. One file is 43 MB (fp32).
+  - **Checks:** unit parity tests in `tests/test_export.py`; on the real gated model
+    + vocoder 168k, durations are identical to PyTorch and the audio differs only by
+    the random excitation (log-mel distance 0.16, the same as two PyTorch seeds).
+  - **Speed:** ONNX Runtime on one CPU thread, 22× real time; ONNX Runtime Web
+    (wasm, Node, one thread), 7.7× real time.
 
 ## Config fields added in this round (all default off; old fingerprints unchanged)
 
@@ -179,4 +187,5 @@ so the training environment's `transformers` and `torch` stay untouched.
 3. **The voice model is starting to overfit:** the validation − training gap grows
    from 0.04 to 0.09; the early stop ended block 2.
 4. **Text normalisation:** abbreviations, Roman numerals, currency, loanwords.
-5. **The neural vocoder isn't in the ONNX/browser export yet.**
+5. **Browser size:** the preview graph is 43 MB in fp32; an fp16 or int8 build
+   would halve or quarter the download.

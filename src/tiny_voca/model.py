@@ -123,6 +123,20 @@ def jitter_offset(noise, amount):
     return amount * F.conv1d(noise[:, None], kernel, padding=JITTER_TAPS // 2)[:, 0]
 
 
+GATE_FADE = 601    # samples, about 25 ms at 24 kHz
+
+
+def pulse_gate(voiced, hop, gain):
+    """[B, frames] voicing in [0, 1] -> [B, frames * hop] multiplier for the pulse train:
+    1 in voiced frames, ``gain`` in unvoiced ones, linearly interpolated and smoothed
+    over about 25 ms so the switch is soft."""
+    samples = voiced.shape[1] * hop
+    gate = F.interpolate(voiced.float()[:, None], size=samples, mode="linear", align_corners=False)[:, 0]
+    pad = GATE_FADE // 2
+    gate = F.avg_pool1d(F.pad(gate[:, None], (pad, pad), mode="replicate"), GATE_FADE, 1)[:, 0]
+    return gain + (1 - gain) * gate
+
+
 def pulse_train(f0, sample_rate, hop, limit=0.47, phase=None, log_offset=None):
     """Band-limited pulse train [B, T*hop] with unit power for f0 [B, T] in Hz.
 
@@ -342,7 +356,7 @@ class SourceFilter(nn.Module):
         # then the same whether it stands alone or is padded inside a batch.
         return filtered(F.pad(source, (0, fft // 2)), response, fft, hop, window)[:, :source.shape[-1]]
 
-    def forward(self, hidden, f0, lengths, noise=None, phase=None):
+    def forward(self, hidden, f0, lengths, noise=None, phase=None, voiced=None):
         c = self.config
         frames = hidden.shape[1]
         samples = frames * c.hop
@@ -372,6 +386,10 @@ class SourceFilter(nn.Module):
                 noise = torch.randn(hidden.shape[0], samples, device=hidden.device)
             offset = jitter_offset(noise * audible, c.excitation_jitter) if c.excitation_jitter > 0 else None
             pulses = pulse_train(f0, c.sample_rate, c.hop, c.harmonic_limit, phase, offset) * audible
+            if c.unvoiced_pulse_gain < 1 and voiced is not None:
+                # Hold the last real voicing value through padding, like the pitch above.
+                voiced = voiced.float().gather(1, torch.minimum(torch.arange(frames, device=voiced.device)[None], last))
+                pulses = pulses * pulse_gate(voiced, c.hop, c.unvoiced_pulse_gain)
             wave = (self._shape(pulses, harmonic_response, c.synth_fft, c.synth_hop, self.synth_window)
                     + self._shape(noise * audible, noise_response, c.noise_fft, c.noise_hop, self.noise_window))
             if self.postfilter is not None:
@@ -379,6 +397,35 @@ class SourceFilter(nn.Module):
             if self.head is not None:
                 wave = self.head(wave * audible, hidden, lengths)
             return wave * audible
+
+
+class MelCorrection(nn.Module):
+    """Residual correction of the Vocos log-mel of the source-filter synthesis.
+
+    ``mel = dsp_mel + mask * Linear([acoustic state, dsp_mel])``, zero-initialised so it
+    starts exactly at the uncorrected spectrogram. The mask tapers it in above
+    ``low_hz`` (default 1 kHz): blind band-swap tests (quality-journey §6.3) put the
+    metallic trace above 1 kHz, with the lower bands and their pitch detail fine.
+    It sees the DSP mel as well as the acoustic state, so it can fix band texture,
+    not only the smooth envelope."""
+
+    def __init__(self, channels, bands=100, low_hz=1000.0, sample_rate=24000, fft=1024):
+        super().__init__()
+        from .losses import VocosMel
+        self.project = nn.Linear(channels + bands, bands)
+        nn.init.zeros_(self.project.weight)
+        nn.init.zeros_(self.project.bias)
+        filters = VocosMel(sample_rate, fft, 256, bands).filters
+        centres = (filters * torch.linspace(0, sample_rate / 2, fft // 2 + 1)).sum(1) / filters.sum(1).clamp_min(1e-9)
+        ramp = ((centres - 0.8 * low_hz) / (0.4 * low_hz)).clamp(0, 1)
+        self.register_buffer("mask", ramp * ramp * (3 - 2 * ramp), persistent=False)
+
+    def forward(self, acoustic, dsp_mel):
+        """acoustic [B, T, channels], dsp_mel [B, T + 1, bands] -> corrected [B, T + 1, bands]."""
+        frames = acoustic.shape[1]
+        correction = self.project(torch.cat((acoustic.float(), dsp_mel[:, :frames]), dim=-1))
+        correction = torch.cat((correction, correction[:, -1:]), dim=1)       # the extra centred frame
+        return dsp_mel + self.mask * correction
 
 
 class TinyVoca(nn.Module):
@@ -537,8 +584,9 @@ class TinyVoca(nn.Module):
         pitch = prosody[..., 0] + pitch_shift
         if pitch_jitter > 0:
             pitch = pitch + self.pitch_wobble(pitch.shape, pitch_jitter, seed, pitch.device)
-        wave = self.vocoder(acoustic, self.frequency(pitch), frame_lengths, noise=noise.to(hidden.device))
-        details = {"durations": durations, "prosody": prosody, "frame_mask": frame_mask}
+        wave = self.vocoder(acoustic, self.frequency(pitch), frame_lengths, noise=noise.to(hidden.device),
+                            voiced=(prosody[..., 1] > 0).float())
+        details = {"durations": durations, "prosody": prosody, "frame_mask": frame_mask, "acoustic": acoustic}
         if self.mel_output is not None:
             details["mel"] = self.mel_output(acoustic) * frame_mask[..., None]
         return wave, frame_lengths * self.config.hop, details
