@@ -910,3 +910,15 @@ From now on decisions are made and recorded here, without waiting for approval.
     The model keeps its 12 speaker rows, a negligible cost; Pages lists only the
     preview model, with `voices` = IT1, EF3. The playground uses `--voices IT1
     EF3`. Pages `1aaee9c`.
+
+### 6.7 Round 6 (18 November, evening)
+
+- **Vocoder-three:** a fine-tune from vocoder-two (200k) to 210k, with the
+  high-band pulse share drawn per utterance from [0, 0.1] (`--prior-gain-range`).
+  - Why: IT1's chosen setting (0.0) was outside the training distribution
+    (trained at 0.05 only). The aim is to close IT1's remaining locking gap
+    (0.38 vs real 0.31) without moving EF3.
+  - Same data, losses and distillation as vocoder-two; learning rate 5e-5,
+    checkpoints every 1k steps.
+  - It will be judged per voice on model spectrograms with the per-voice gains,
+    plus a small sweep of IT1 gain below 0.05.

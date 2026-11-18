@@ -103,11 +103,12 @@ class Vocoder(nn.Module):
             nn.init.zeros_(self.prior_in.bias)
         self.register_buffer("window", torch.hann_window(c.fft), persistent=False)
         self.register_buffer("pulse_weight", pulse_weight(c), persistent=False)
+        self.register_buffer("pulse_position", pulse_position(c), persistent=False)
 
     def analyse_prior(self, f0, voiced, noise=None, gain=None):
         """Pitch [B, frames] in Hz and voicing in [0, 1] -> complex STFT [B, bins, frames + 1]
-        of a pulse train (voiced frames) plus a fixed noise floor. ``gain`` overrides the
-        high-band pulse share."""
+        of a pulse train (voiced frames) plus a fixed noise floor. ``gain`` (a number, or one
+        per utterance [B]) overrides the high-band pulse share."""
         from .model import pulse_train
         c = self.config
         samples = f0.shape[1] * c.hop
@@ -119,8 +120,12 @@ class Vocoder(nn.Module):
             source = pulses * gate + c.prior_noise * noise
             return torch.stft(source, c.fft, c.hop, window=self.window, center=True, return_complex=True)
         stft = lambda x: torch.stft(x, c.fft, c.hop, window=self.window, center=True, return_complex=True)
-        weight = self.pulse_weight if gain is None else pulse_weight(c, gain).to(self.pulse_weight)
-        return stft(pulses * gate) * weight[:, None] + stft(c.prior_noise * noise)
+        if gain is None:
+            weight = self.pulse_weight[None, :, None]
+        else:
+            gain = torch.as_tensor(gain, dtype=self.pulse_position.dtype, device=self.pulse_position.device).reshape(-1, 1, 1)
+            weight = 1 + (gain - 1) * self.pulse_position[None, :, None]
+        return stft(pulses * gate) * weight + stft(c.prior_noise * noise)
 
     def spectrum(self, mel, prior=None):
         """mel [B, bands, frames] -> (log magnitude, phase or phase correction), each [B, bins, frames]."""

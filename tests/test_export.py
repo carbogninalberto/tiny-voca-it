@@ -117,6 +117,18 @@ class NeuralExportTest(unittest.TestCase):
         self.assertGreater(float((reference - default).abs().max()), 1e-4)
         self.assertLess(float((audio - reference).abs().max()), 1e-3 * float(reference.abs().max()))
 
+    def test_prior_gain_per_utterance(self):
+        vocoder = small_vocoder(2500.0)
+        f0 = 120 + 30 * torch.rand(2, 20, generator=torch.Generator().manual_seed(3))
+        voiced, noise = torch.ones(2, 20), torch.randn(2, 20 * vocoder.config.hop, generator=torch.Generator().manual_seed(4))
+        both = vocoder.analyse_prior(f0, voiced, noise, gain=torch.tensor([0.0, 0.3]))
+        for i, gain in enumerate((0.0, 0.3)):
+            alone = vocoder.analyse_prior(f0[i:i + 1], voiced[i:i + 1], noise[i:i + 1], gain=gain)
+            self.assertLess(float((both[i:i + 1] - alone).abs().max()), 1e-5)
+        default = vocoder.analyse_prior(f0, voiced, noise)
+        configured = vocoder.analyse_prior(f0, voiced, noise, gain=vocoder.config.prior_high_gain)
+        self.assertLess(float((default - configured).abs().max()), 1e-5)
+
     def test_onnx_with_vocoder_and_emotion_matches_pytorch(self):
         try:
             import onnxruntime as ort

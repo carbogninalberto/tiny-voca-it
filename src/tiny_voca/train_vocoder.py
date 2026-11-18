@@ -179,6 +179,9 @@ def main():
     parser.add_argument("--prior", action="store_true", help="Harmonic-prior vocoder: phase from a pulse train built from the pitch")
     parser.add_argument("--prior-high-hz", type=float, default=0.0, help="Weaken the prior's pulses above this frequency (0 = off)")
     parser.add_argument("--prior-high-gain", type=float, default=1.0, help="Pulse share at twice --prior-high-hz and above")
+    parser.add_argument("--prior-gain-range", type=float, nargs=2, metavar=("LOW", "HIGH"),
+                        help="Train with the high-band pulse share drawn per utterance from [LOW, HIGH], so any "
+                             "per-voice setting in that range is in distribution (the default stays --prior-high-gain)")
     parser.add_argument("--pairs", nargs="*", default=[], help="tiny_voca.vocoder_pairs manifests: the voice model's own spectrograms")
     parser.add_argument("--pair-fraction", type=float, default=0.7, help="Share of paired clips that use the voice model's spectrogram")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
@@ -267,7 +270,11 @@ def main():
             input_mel = torch.where(use[:, None, None], paired_mel.to(args.device), real_mel)
         else:
             input_mel = real_mel
-        prior = vocoder.analyse_prior(f0.to(args.device), voiced.to(args.device)) if config.prior else None
+        gain = None
+        if args.prior_gain_range:
+            low, high = args.prior_gain_range
+            gain = low + (high - low) * torch.rand(f0.shape[0], device=args.device)
+        prior = vocoder.analyse_prior(f0.to(args.device), voiced.to(args.device), gain=gain) if config.prior else None
         predicted = vocoder.spectrum(input_mel.transpose(1, 2), prior)
         fake = vocoder.render(*predicted, prior=prior)[:, :real.shape[1]]
         adversarial_on = step >= args.gan_start
