@@ -809,3 +809,25 @@ From now on decisions are made and recorded here, without waiting for approval.
   - Decision: adopt voice-two. EF3 gains a lot and IT1 holds. The browser preview
     and the playground now use it with the 180k vocoder (Pages `4a4b3b4`). Blind
     old/new files were sent; key in `voicetwo-key.json`.
+- **Voice-two blind test and checkpoint choice (17:40):**
+  - Listener: old better for IT1, new better for EF3.
+  - Checkpoint sweep (EMA weights, 40 IT1 + 14 EF3 test clips; mel error above
+    1 kHz / pulse locking at 4–6 kHz; real IT1 0.31, real EF3 0.48):
+
+    | Checkpoint | IT1 mel | IT1 lock | EF3 mel | EF3 lock |
+    |---|---|---|---|---|
+    | voice-adv-pilot (old) | 0.638 | 0.44 | 0.837 | 0.46 |
+    | 115k | **0.635** | **0.44** | 0.584 | **0.55** |
+    | 120k | 0.632 | 0.46 | 0.572 | 0.59 |
+    | 125k | 0.643 | 0.47 | 0.570 | 0.58 |
+    | 130k | 0.639 | 0.47 | 0.583 | 0.58 |
+    | 133k (final) | 0.638 | 0.47 | 0.582 | 0.57 |
+
+  - Ear and data agree: IT1's locking creeps up during the fine-tune and the ear
+    hears it as more metallic.
+  - Decision: use **step 115k** (`runs/voice-two/inference-115000.pt`). IT1 is
+    unchanged, EF3 keeps almost all of its gain, and EF3 locks the least of the
+    new checkpoints. Applied to the playground and Pages (`1784209`).
+  - Next voice round: the locking creep points at the adversarial term
+    sharpening harmonics above 4 kHz. To do: a shorter fine-tune, or the
+    noise-friendly loss above 2 kHz.
