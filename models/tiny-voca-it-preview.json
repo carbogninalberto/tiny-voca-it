@@ -111,7 +111,7 @@
   "surprise",
   "disgust"
  ],
- "vocoder_step": 200000,
+ "vocoder_step": 210000,
  "vocoder_voice_high_gain": [
   [
    "IT1",
