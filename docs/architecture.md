@@ -78,12 +78,20 @@ EMA weights):**
   - an auxiliary mel head;
   - the **vocoder-input loss**: an L1 between the Vocos mel of the intermediate
     waveform and of the recording (`vocos_mel_loss`, weight 10).
-  - No adversarial loss.
+  - Adversarial losses in fine-tuning only:
+    - the waveform critics (multi-period + multi-resolution STFT), with the GAN
+      gradient scaled to `--gan-ratio` × the reconstruction gradient;
+    - optionally **`--mel-critic`**: a 41k-parameter critic on the Vocos log-mel
+      above 1 kHz (the vocoder's input, where the model over-smooths). It is used in
+      training only and added non-strictly to existing critics.
 - **History:**
   - IT1-only run to 14k (`runs/it1-full`);
   - 6 voices, 14k → 64k (`runs/voice`);
   - emotion, 64k → 103k (`runs/voice-emotion`), stopped by the overfitting guard
-    (best validation at 95k).
+    (best validation at 95k);
+  - adversarial pilot, 103k → 113k (`runs/voice-adv-pilot`, the current base);
+  - soft pulse gate, 113k → 128k (`runs/voice-gate`, no measurable gain);
+  - mel critic, 113k → 128k (`runs/voice-mel-critic`, round 4, running).
 
 ## Vocoder (`Vocoder`, `prior=True`)
 
@@ -130,7 +138,8 @@ harmonics advance coherently from frame to frame.
 | Task | Command / file |
 |---|---|
 | Listen | `scripts/playground_server.py` (port 8790): follows the newest checkpoints; choice of vocoder (ours / old DSP / Vocos), emotion, intensity, speed, intonation, 20 test sentences. From another machine use an SSH tunnel: `ssh -N -L 8790:localhost:8790 <user>@<pc>` |
-| Synthesis from Python | `tiny_voca.infer.speak` → DSP waveform and details (pitch, voicing); then `VocosMel` + `load_vocoder(...)(mel, f0, voiced)` |
+| Synthesis from the command line | `python -m tiny_voca.infer --checkpoint <inference.pt> --vocoder <vocoder.pt> --voice IT1 [--emotion joy --intensity 0.8] --text ... --output x.wav` |
+| Synthesis from Python | `tiny_voca.infer.speak` → DSP waveform and details (pitch, voicing); then `tiny_voca.infer.vocode` (or `VocosMel` + `load_vocoder(...)(mel, f0, voiced)`) |
 | Train the voice model | `python -m tiny_voca.train` (see `scripts/training/voice-emotion.sh`) |
 | Train the vocoder | `python -m tiny_voca.train_vocoder` (see `scripts/training/vocoder-prior.sh`) |
 | Vocoder fine-tune pairs | `python -m tiny_voca.vocoder_pairs` |

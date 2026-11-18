@@ -333,6 +333,63 @@ Blind comparison files are built at the end of each stage.
   Pages.
 - **Listening verdicts** on the A and G files are still pending.
 
+**Blind verdicts:**
+
+- **A (adversarial pilot):** the real spectrogram was rated "good" for both voices.
+  - IT1: 103k "metallic" → adversarial 113k "a bit metallic".
+  - CML4974: both "metallic".
+  - The sentences were "almost identical".
+  - So: a small gain, on one voice only.
+- **V (vocoder 150k vs 180k):**
+
+  | Input | Vocoder 150k | Vocoder 180k |
+  |---|---|---|
+  | Real IT1 | good (very subtle trace) | good |
+  | Real CML4974 | a bit metallic | good |
+  | Gated model IT1 | a bit metallic | metallic |
+  | Gated model CML4974 | metallic | metallic |
+  | Gated model, sentence | a bit metallic | metallic |
+
+  - The extra 30k steps on the gated model's pairs made the vocoder **better on real
+    spectrograms and worse on the model's**. It renders the model's smooth spectrogram
+    more literally rather than hiding it.
+  - **Objective check:** 85 test clips of the model's own spectrograms, with
+    teacher-forced timing and pitch, measured against the real recording.
+
+    | Vocoder | Mel error > 1 kHz | Mel error < 1 kHz | Fine detail > 1 kHz (real = 1) | Pulse locking 1–2 / 2–4 / 4–6 kHz (real 0.53 / 0.47 / 0.40) |
+    |---|---|---|---|---|
+    | 150k | 0.822 | 0.773 | 0.82 | 0.69 / 0.63 / 0.58 |
+    | 180k | **0.806** | **0.751** | 0.78 | **0.63 / 0.56 / 0.45** |
+
+    - 180k is closer to the real voice on spectrogram error and pulse locking (the
+      buzz measure), and slightly smoother.
+    - The user asked to follow the data, so **180k is kept** in the playground and on
+      Pages. (It was briefly switched back to 150k after the listening test.)
+  - **Both vocoders lock to the pulses more than real speech does** (0.58–0.45 vs
+    0.40 at 4–6 kHz). Real spectrograms through either vocoder lock the same way,
+    0.60 at 4–6 kHz, so this residual buzz is in the vocoder, not only in the voice
+    model.
+- **G (gated fine-tune), blind, through vocoder 150k:**
+
+  | Voice | Real | Adversarial 113k | Gated 128k |
+  |---|---|---|---|
+  | IT1 | good | subtle metallic, still good | a bit metallic |
+  | CML4974 | a bit metallic | metallic | metallic |
+
+  The sentences were both "metallic".
+
+  Objective check (85 test clips, vocoder 180k):
+
+  | Voice model | Mel error > 1 kHz | Mel error < 1 kHz | Fine detail > 1 kHz | Pulse locking |
+  |---|---|---|---|---|
+  | 103k | 0.805 | 0.758 | 0.74 | 0.61 / 0.55 / 0.45 |
+  | Adversarial 113k | **0.802** | **0.749** | **0.78** | 0.64 / 0.56 / 0.46 |
+  | Gated 128k | 0.806 | 0.751 | 0.78 | 0.63 / 0.56 / 0.45 |
+
+  - Adversarial training restored some fine detail (0.74 → 0.78).
+  - The soft gate adds nothing measurable, and by ear it is slightly worse on IT1.
+  - **Round 4 starts from the adversarial model (113k), without the gate.**
+
 **Pilot: direct spectrogram instead of the DSP route (rejected).**
 
 - **Setup:** the voice model got a 100-band Vocos-mel output (`vocos_mels=100`),

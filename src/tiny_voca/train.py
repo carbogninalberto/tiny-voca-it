@@ -168,7 +168,7 @@ def crops(fake, real, lengths, size, count):
 SCHEDULES = ("half_life", "cosine")
 # Recipe fields added after format 4. A run recorded without them used these
 # values, so resuming it compares equal and behaves exactly as before.
-RECIPE_DEFAULTS = {"schedule": "half_life", "lr_floor": 0.0, "ema_decay": None, "total_steps": None}
+RECIPE_DEFAULTS = {"schedule": "half_life", "lr_floor": 0.0, "ema_decay": None, "total_steps": None, "mel_critic": False}
 
 
 def learning_rate(step, base, warmup, half_life, start=0, schedule="half_life", total=None, floor=0.0):
@@ -491,6 +491,7 @@ def main():
     parser.add_argument("--feature-matching", type=float, default=30.0, help="Feature-matching weight inside the adversarial term")
     parser.add_argument("--gan-scale-max", type=float, default=2000.0)
     parser.add_argument("--crop-samples", type=int, default=8192)
+    parser.add_argument("--mel-critic", action="store_true", help="Add a critic on the Vocos log-mel above 1 kHz (what the neural vocoder reads)")
     parser.add_argument("--crops", type=int, default=2, help="Discriminator windows per utterance")
     parser.add_argument("--teacher-hold", type=int, default=3000, help="Steps with recorded prosody conditioning only")
     parser.add_argument("--teacher-ramp", type=int, default=7000)
@@ -571,7 +572,7 @@ def main():
     if not args.no_preload and not args.stream:
         train.preload(pool)
         validation.preload(validation_indices)
-    system, critics = TrainingSystem(c).to(args.device), Discriminators().to(args.device)
+    system, critics = TrainingSystem(c).to(args.device), Discriminators(mel=args.mel_critic).to(args.device)
     count = sum(p.numel() for p in system.model.parameters())
     if count > c.max_parameters:
         raise ValueError(f"inference parameter budget exceeded: {count:,} > {c.max_parameters:,} (config max_parameters)")
@@ -611,6 +612,8 @@ def main():
                                                    "crop_samples", "crops", "teacher_hold", "teacher_ramp", "teacher_final",
                                                    "subset", "validation_size", "seed")}
     recipe["voiced_vowel_targets"] = not args.recorded_voicing
+    if args.mel_critic:
+        recipe["mel_critic"] = True
     recipe["weights"] = {**WEIGHTS, **{key: float(value) for key, value in args.weights.items()}}
     recipe["branched_from"] = None
     recipe["adaptation"] = adaptation
@@ -663,8 +666,14 @@ def main():
         # critics to the generator. Optimizer moments are kept when no tensor changed.
         loaded["critics"] = step > state["recipe"]["gan_start"]
         if loaded["critics"]:
-            critics.load_state_dict(state["critics"])
-            critic_optimizer.load_state_dict(state["critic_optimizer"])
+            # A critic added in the branch (e.g. --mel-critic) starts fresh; the others keep their training.
+            missing, unexpected = critics.load_state_dict(state["critics"], strict=False)
+            if unexpected:
+                raise ValueError(f"checkpoint critics not in this run: {unexpected[:3]}")
+            if missing:
+                loaded["new_critics"] = sorted({key.split(".")[1] for key in missing})
+            else:
+                critic_optimizer.load_state_dict(state["critic_optimizer"])
         loaded["optimizer"] = not loaded["grown"] and not loaded["new"] and not loaded["dropped"]
         if loaded["optimizer"]:
             optimizer.load_state_dict(state["optimizer"])

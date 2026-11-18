@@ -129,13 +129,40 @@ class SpectrogramDiscriminator(nn.Module):
         return self.output(x), features
 
 
+class MelDiscriminator(nn.Module):
+    """Critic on the Vocos log-mel spectrogram (what the neural vocoder reads),
+    restricted to the bands above ``low_hz`` where the voice model over-smooths."""
+
+    def __init__(self, low_hz=1000.0, channels=32):
+        super().__init__()
+        self.features = VocosMel()
+        centres = self.features.filters.argmax(1).float() * 24000 / 1024
+        self.low = int((centres < low_hz).sum())
+        self.layers = nn.ModuleList([
+            weight_norm(nn.Conv2d(1, channels, (3, 5), padding=(1, 2))),
+            weight_norm(nn.Conv2d(channels, channels, (3, 5), stride=(1, 2), padding=(1, 2))),
+            weight_norm(nn.Conv2d(channels, channels, (3, 5), stride=(1, 2), padding=(1, 2))),
+            weight_norm(nn.Conv2d(channels, channels, (3, 3), padding=(1, 1))),
+        ])
+        self.output = weight_norm(nn.Conv2d(channels, 1, (3, 3), padding=(1, 1)))
+
+    def forward(self, wave):
+        x = self.features(wave)[:, None, :, self.low:]           # [B, 1, frames, bands above low_hz]
+        features = []
+        for layer in self.layers:
+            x = F.leaky_relu(layer(x), 0.1)
+            features.append(x)
+        return self.output(x), features
+
+
 class Discriminators(nn.Module):
     """Training-only waveform critics. Never included in an inference export."""
 
-    def __init__(self, periods=(2, 3, 5, 7, 11), resolutions=((512, 128), (1024, 256), (2048, 512))):
+    def __init__(self, periods=(2, 3, 5, 7, 11), resolutions=((512, 128), (1024, 256), (2048, 512)), mel=False):
         super().__init__()
         self.networks = nn.ModuleList([PeriodDiscriminator(p) for p in periods]
-                                      + [SpectrogramDiscriminator(fft, hop) for fft, hop in resolutions])
+                                      + [SpectrogramDiscriminator(fft, hop) for fft, hop in resolutions]
+                                      + ([MelDiscriminator()] if mel else []))
 
     def forward(self, wave):
         return [network(wave) for network in self.networks]

@@ -522,9 +522,6 @@ class ModelTests(unittest.TestCase):
                          expect=1, config="hop.json")
             self.assertIn("cep_anti", failed.stderr)
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class EmotionTests(unittest.TestCase):
     def test_emotion_input_is_neutral_at_zero_intensity_and_branches_cleanly(self):
@@ -604,3 +601,22 @@ class PulseGateTests(unittest.TestCase):
         middle = slice(55 * c.hop, 65 * c.hop)
         self.assertAlmostEqual(float(b[0, middle].square().mean() / a[0, middle].square().mean()), 0.25, delta=0.05)
         torch.testing.assert_close(ungated, a)
+
+
+class MelCriticTests(unittest.TestCase):
+    def test_mel_critic_is_optional_and_loads_older_critics(self):
+        old = Discriminators(periods=(2,), resolutions=((256, 64),))
+        new = Discriminators(periods=(2,), resolutions=((256, 64),), mel=True)
+        self.assertEqual(len(new.networks), len(old.networks) + 1)
+        missing, unexpected = new.load_state_dict(old.state_dict(), strict=False)
+        self.assertEqual(unexpected, [])
+        self.assertTrue(missing and all(key.startswith("networks.2.") for key in missing))
+        wave = torch.randn(2, 8192, requires_grad=True)
+        score, features = new(wave)[-1]
+        self.assertEqual(score.shape[:3], (2, 1, 33))
+        score.mean().backward()
+        self.assertTrue(torch.isfinite(wave.grad).all() and wave.grad.abs().sum() > 0)
+
+
+if __name__ == "__main__":
+    unittest.main()
