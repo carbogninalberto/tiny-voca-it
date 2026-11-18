@@ -831,3 +831,23 @@ From now on decisions are made and recorded here, without waiting for approval.
   - Next voice round: the locking creep points at the adversarial term
     sharpening harmonics above 4 kHz. To do: a shorter fine-tune, or the
     noise-friendly loss above 2 kHz.
+- **Vocoder-two result (19:54, 200k):**
+  - Setup: voice model 115k; 40 IT1 + 14 EF3 test clips. Old = vocoder-prior2
+    at 180k. Columns: mel error above 1 kHz / fine detail (real = 1) / pulse
+    locking at 4–6 kHz; real locking is 0.31 for IT1 and 0.48 for EF3.
+
+    | | IT1, real mel | IT1, model mel | EF3, real mel | EF3, model mel |
+    |---|---|---|---|---|
+    | old 180k | 0.148 / – / 0.62 | 0.635 / 0.78 / 0.44 | 0.163 / – / 0.64 | 0.584 / 0.88 / 0.55 |
+    | vocoder-two 200k | 0.157 / – / 0.45 | 0.662 / 0.85 / 0.45 | 0.168 / – / 0.47 | 0.601 / 0.91 / 0.50 |
+
+  - The 190k–200k checkpoints measure the same (converged early).
+  - The high-band prior did its job on real spectrograms: locking fell
+    0.62 → 0.45 for IT1, and EF3 now matches real speech.
+  - On model spectrograms, detail improves and EF3 locking falls, but IT1
+    locking does not move: IT1's remaining lock comes from the voice model's
+    spectrogram, not the vocoder. Mel error rises 3–4%, as expected from the
+    lower mel weight.
+  - Decision: no objective winner on both voices, so the blind test (W files,
+    key `vocoder-two-key.json`) decides. Until then the preview keeps the 180k
+    vocoder; the playground offers both.
