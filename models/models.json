@@ -1,5 +1,5 @@
 [
-  {"id": "preview", "file": "tiny-voca-it-preview", "label": "Preview · 12 voices, emotion, neural vocoder (work in progress)", "voice": "IT1"},
+  {"id": "preview", "file": "tiny-voca-it-preview", "label": "Preview · IT1 + EF3, emotion, neural vocoder (work in progress)", "voice": "IT1"},
   {"id": "it1", "file": "tiny-voca-it-IT1", "label": "IT1 · Italian base"},
   {"id": "it2", "file": "tiny-voca-it-IT2-adapted", "label": "IT2 · adapted voice (28 min of data)"}
 ]
