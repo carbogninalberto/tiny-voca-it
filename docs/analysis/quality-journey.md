@@ -672,3 +672,48 @@ to ONNX).
 - pulse locking at 4–6 kHz towards 0.41 (now 0.45);
 - mel error not worse;
 - then blind listening.
+
+### 6.5 Two voices (decided 18 November)
+
+The final model needs only two voices: **IT1** (male) and **EF3** (female; chosen by
+timbre).
+
+**Per-voice measurement** (adversarial 113k + vocoder 180k, 10 test clips each,
+error above 1 kHz):
+
+| Voice | Vocoder on the real spectrogram | Voice model's spectrogram |
+|---|---|---|
+| IT1 | 0.148 | 0.658 |
+| CML6807 | 0.154 | 0.649 |
+| CML1989 | 0.144 | 0.721 |
+| CML4998 | 0.146 | 0.750 |
+| CML2033 | 0.159 | 0.926 |
+| CML4974 | 0.149 | 0.968 |
+
+- **The vocoder is voice-independent:** about 0.15 error for every voice.
+- **The voice model is much worse on some voices,** and not because of data amount:
+  CML4974 has 13 h of training data and is the worst.
+- Twelve voices dilute a 4.5M model. Two voices concentrate it.
+
+**Candidate female voices:**
+
+- CML6807: rejected, strong Sicilian accent.
+- No other large female CML-TTS reader exists.
+- Public Italian female sets are 16 kHz (M-AILABS) or commercial.
+
+**EF3 data:**
+
+- EF3 had only 23 minutes, each clip designed separately, so the timbre drifts.
+- **`scripts/generate_voice.py`** clones one EF3 clip (`emo-EF3-neutral-0.0-3e06518d08`,
+  picked by ear) with Qwen3-TTS Base on about 6 h of CML-TTS sentences, screened by
+  Whisper.
+- The audio is synthetic and labelled as such.
+
+**Round 5** (`scripts/training/round5.sh`):
+
+1. EF3 data, features and alignment.
+2. Fine-tune on IT1 + EF3 + the emotion set, 20k steps, adversarial with the mel
+   critic, from the best round-4 checkpoint.
+3. Vocoder 180k → 200k on IT1 + EF3, with the high-band prior.
+
+The planned 15k-step high-band vocoder run on all voices (§6.4) is replaced by step 3.
