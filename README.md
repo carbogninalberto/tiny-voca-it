@@ -1,7 +1,7 @@
 # tiny-voca-it
 
 tiny-voca-it is a small **Italian** text-to-speech model: about **6.8M parameters**
-in total, 12 voices, an emotion control, and a neural vocoder. It runs on a CPU and
+in total, two voices (IT1 male, EF3 female), an emotion control, and a neural vocoder. It runs on a CPU and
 in the browser.
 
 It started as a fork of [tiny-voca](https://github.com/n4ze3m/tiny-voca), a 4.5M
@@ -39,10 +39,12 @@ flowchart LR
 
 - **Italian front end:** an Italian eSpeak NG profile with stress and geminates, and
   a JavaScript port for the browser that matches the Python front end exactly.
-- **12 voices:**
-  - IT1 (the main voice);
-  - five more CML-TTS readers (CML4974, CML4998, CML6807, CML2033, CML1989);
-  - six synthetic emotional voices (EF1–3, EM1–3).
+- **Two voices:**
+  - **IT1** (male): a CML-TTS audiobook reader.
+  - **EF3** (female): a synthetic voice, 6 hours cloned from one reference clip with
+    Qwen3-TTS and screened with Whisper.
+  - The model was pre-trained on 12 voices (six CML-TTS readers and six synthetic
+    emotional voices) and then fine-tuned on these two.
 - **Emotion control:** neutral, joy, sadness, anger, fear, surprise, disgust, each
   with an intensity (0–1.5). Implemented as intensity × a learned vector, so it costs
   about 3k parameters. It works best on the EF/EM voices.
