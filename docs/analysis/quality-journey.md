@@ -798,3 +798,14 @@ From now on decisions are made and recorded here, without waiting for approval.
     models (the vocoder high-band prior, the voice loss above 2 kHz).
   - Why lower playback volume sounds less metallic: masking at the ear, not a
     property of the audio.
+- **Voice-two result (17:01, step 133,292):**
+  - Setup: test clips scored with the model's own spectrograms through the 180k
+    vocoder; the reference model is voice-adv-pilot.
+  - **EF3** (10 clips): mel error above 1 kHz 0.849 → **0.570** (−33%); fine detail
+    0.85 → 0.88; pulse locking at 4–6 kHz 0.46 → 0.57 (real speech 0.50).
+  - **IT1** (40 clips): mel error above 1 kHz 0.638 → 0.638 (unchanged); detail
+    0.78 → 0.78; locking 0.44 → 0.47 (real 0.31; the vocoder is mostly
+    responsible, and the vocoder-two retrain addresses it).
+  - Decision: adopt voice-two. EF3 gains a lot and IT1 holds. The browser preview
+    and the playground now use it with the 180k vocoder (Pages `4a4b3b4`). Blind
+    old/new files were sent; key in `voicetwo-key.json`.
