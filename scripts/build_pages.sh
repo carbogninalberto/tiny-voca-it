@@ -48,7 +48,8 @@ done
 PREVIEW_ENTRY=""
 if [ -n "${PREVIEW_VOICE:-}" ]; then
   "$PYTHON" -W ignore -m tiny_voca.export --checkpoint "$PREVIEW_VOICE" --vocoder "$PREVIEW_VOCODER" --output "$OUT/models/tiny-voca-it-preview.onnx"
-  PREVIEW_ENTRY='  {"id": "preview", "file": "tiny-voca-it-preview", "label": "Preview · IT1 + EF3, emotion, neural vocoder (work in progress)", "voice": "IT1"},'
+  STAMP=$(TZ=Europe/Rome date "+%Y-%m-%d %H:%M")
+  PREVIEW_ENTRY="  {\"id\": \"preview\", \"file\": \"tiny-voca-it-preview\", \"label\": \"Preview · IT1 + EF3, emotion, neural vocoder · updated $STAMP\", \"voice\": \"IT1\"},"
 fi
 cat > "$OUT/models/models.json" <<EOF
 [
