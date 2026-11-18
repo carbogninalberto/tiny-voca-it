@@ -147,6 +147,25 @@ harmonics advance coherently from frame to frame.
 | GPU caps | `scripts/gpu_governor.py` (pause per step to hold ≤85% utilisation / ≤250 W) |
 | Run scripts used for every run | `scripts/training/` (copies of the launch, switching and watchdog scripts) |
 
+**Data kept on disk (18 November, after the two-voice decision):**
+
+- IT1:
+  - features in `data/it-multi-features` (IT1 rows only; filtered manifests
+    `train-it1.jsonl`);
+  - `data/it1-full-features`;
+  - annotations in `data/it-multi6-annotations` (filtered `*-it1.jsonl`).
+- The emotion set.
+- EF3 (`data/ef3-*`).
+
+Removed:
+
+- the CML-TTS source parquet;
+- the old IT1 features (`it-features`, `it-1595`);
+- the features of the 9 other CML voices.
+
+The full multi-voice manifests still list those voices' rows, so use the `*-it1`
+manifests. Re-download `ylacombe/cml-tts` to rebuild them.
+
 Some scripts use packages kept outside the project environment: `vocos` for the
 teacher and reference, `qwen-tts` for emotion data, and `matplotlib` for charts.
 They were installed with `pip install --target <dir>` and passed via `PYTHONPATH`,

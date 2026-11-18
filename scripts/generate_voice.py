@@ -117,6 +117,7 @@ def main():
             if not batch:
                 break
         if (i // args.batch) % 25 == 0:
+            write_splits(args.root)   # lets a CPU job prepare features while generation continues
             print(json.dumps({"accepted_hours": round(accepted / 3600, 3), "minutes": round((time.time() - start) / 60, 1)}), flush=True)
     print(json.dumps({"complete": True, "clips": write_splits(args.root), "accepted_hours": round(accepted / 3600, 3)}), flush=True)
 

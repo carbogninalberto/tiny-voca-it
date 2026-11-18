@@ -14,8 +14,20 @@ governor(){ .venv/bin/python scripts/gpu_governor.py --file $1 --max-util 85 --t
 until [ -f $LIB/mel-critic-key.json ]; do sleep 60; done
 if ! grep -q '"complete": true' logs/ef3-gen.log 2>/dev/null; then
   log "EF3 generation: start"
-  PYTHONPATH=$LIB/qwenlib .venv/bin/python scripts/generate_voice.py --root data/ef3-synth --voice-id EF3 \
-    --reference data/emotion-synth/audio/emo-EF3-neutral-0.0-3e06518d08.wav --hours 6 --batch 8 >> logs/ef3-gen.log 2>&1
+# (disabled: prepare --resume refuses a growing input)                                       
+#                                                                      
+#              
+#                                       
+#                                                                                                                                                  
+#                                                                                                                                               
+#         
+#           
+  # Batch 16 when the GPU is free (faster); on any failure (e.g. out of memory) resume at batch 8.
+  for B in 16 8; do
+    PYTHONPATH=$LIB/qwenlib .venv/bin/python scripts/generate_voice.py --root data/ef3-synth --voice-id EF3 \
+      --reference data/emotion-synth/audio/emo-EF3-neutral-0.0-3e06518d08.wav --hours 6 --batch $B >> logs/ef3-gen.log 2>&1 && break
+    log "EF3 generation failed at batch $B"
+  done
   grep -q '"complete": true' logs/ef3-gen.log || { log "EF3 generation failed"; exit 1; }
 fi
 log "EF3 generation done: $(grep -o '"accepted_hours": [0-9.]*' logs/ef3-gen.log | tail -1)"
@@ -25,7 +37,7 @@ if ! grep -q "EF3-PREP-DONE" logs/ef3-prep.log 2>/dev/null; then
   ( set -e
     for s in validation test train; do
       .venv/bin/python -m tiny_voca.prepare --inputs data/ef3-synth/$s.jsonl --split $s --output data/ef3-features \
-        --config configs/italian-voice-emotion.json --workers 6 --resume
+        --config configs/italian-voice-emotion.json --workers 10 --resume
     done
     .venv/bin/python -m tiny_voca.annotate --features data/ef3-features --output data/ef3-annotations \
       --dataset-revision qwen3-clone-ef3-20261118 --config configs/italian-voice-emotion.json --device cuda --resume
@@ -43,7 +55,7 @@ if [ "$(step_of runs/voice-two/last.pt)" -lt "$TARGET" ] || [ ! -f runs/voice-tw
     --train data/it-multi6-annotations/train-it1.jsonl data/ef3-annotations/train.jsonl data/emotion-annotations/train.jsonl \
     --validation data/it-multi6-annotations/validation-it1.jsonl data/ef3-annotations/validation.jsonl data/emotion-annotations/validation.jsonl \
     --validation-size 96 --output runs/voice-two --config configs/italian-voice-emotion.json --steps $TARGET --batch-frames 9000 --max-batch 32 \
-    --learning-rate 1e-4 --warmup 300 --gan-start 0 --gan-ramp 1000 --gan-ratio 1.0 --mel-critic --teacher-hold 0 --teacher-ramp 1 --teacher-final 0 \
+    --learning-rate 1e-4 --warmup 300 --gan-start 0 --gan-ramp 1000 --gan-ratio 0.7              --teacher-hold 0 --teacher-ramp 1 --teacher-final 0 \
     --weights '{"pitch_spread": 4.0}' --lr-schedule cosine --ema-decay 0.999 --stream \
     --throttle-file logs/voice-two.throttle.json --save-every 1000 --keep-every 5000 --max-seconds 172800 >> logs/voice-two.log 2>&1
   kill $G 2>/dev/null
