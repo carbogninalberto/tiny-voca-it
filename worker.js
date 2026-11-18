@@ -1,13 +1,13 @@
 // Browser worker: Italian front end (eSpeak NG compiled to WebAssembly + the
 // ported tiny_voca rules in frontend.js) and the model (ONNX Runtime Web).
-// Messages in: {type: "load", model} and {type: "speak", id, text, speed, pitch, range}.
+// Messages in: {type: "load", model} and {type: "speak", id, text, speed, pitch, range, voice, emotion, intensity}.
 // Messages out: status, ready, sentence, done, error.
 
 import * as ort from "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.wasm.min.mjs";
 import ESpeakNg from "./espeak-ng/espeak-ng.js";
 import { ItalianFrontend } from "./frontend.js";
 
-const VERSION = "1";   // bump when files under models/ or espeak-ng/ change
+const VERSION = "2";   // bump when files under models/ or espeak-ng/ change
 ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/";
 ort.env.wasm.numThreads = 1;
 
@@ -96,15 +96,17 @@ async function fit(sentence) {
   return [...await fit(words.slice(0, half).join(" ")), ...await fit(words.slice(half).join(" "))];
 }
 
-async function synthesize(phones, { speed, pitch, range }) {
+async function synthesize(phones, { speed, pitch, range, voice = 0, emotion = 0, intensity = 0 }) {
   const count = phones.ids.length;
   const integers = (values) => new ort.Tensor("int64", BigInt64Array.from(values.map(BigInt)), [1, count]);
   const scalar = (value) => new ort.Tensor("float32", Float32Array.from([value]), [1]);
-  const output = await current.session.run({
-    tokens: integers(phones.ids), stress: integers(phones.stress),
-    voice: new ort.Tensor("int64", BigInt64Array.from([0n]), [1]),
+  const index = (value) => new ort.Tensor("int64", BigInt64Array.from([BigInt(value)]), [1]);
+  const feeds = {
+    tokens: integers(phones.ids), stress: integers(phones.stress), voice: index(voice),
     speed: scalar(speed), pitch_shift: scalar(pitch * Math.LN2 / 12), pitch_range: scalar(range),
-  });
+  };
+  if (current.metadata.inputs.includes("emotion")) Object.assign(feeds, { emotion: index(emotion), intensity: scalar(intensity) });
+  const output = await current.session.run(feeds);
   return output.audio.data;
 }
 
@@ -143,7 +145,8 @@ onmessage = async ({ data }) => {
   try {
     if (data.type === "load") {
       await Promise.all([loadEspeak(), loadModel(data.model)]);
-      postMessage({ type: "ready", model: data.model.id, step: current.metadata.step, voices: current.metadata.voices });
+      postMessage({ type: "ready", model: data.model.id, step: current.metadata.step, vocoderStep: current.metadata.vocoder_step,
+                    voices: current.metadata.voices, emotions: current.metadata.emotions || [] });
     } else if (data.type === "speak") {
       await speak(data);
     }
