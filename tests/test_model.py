@@ -618,5 +618,22 @@ class MelCriticTests(unittest.TestCase):
         self.assertTrue(torch.isfinite(wave.grad).all() and wave.grad.abs().sum() > 0)
 
 
+class PitchSmoothingTests(unittest.TestCase):
+    def test_smoothing_keeps_spread_and_ignores_padding(self):
+        from tiny_voca.model import TinyVoca
+        g = torch.Generator().manual_seed(0)
+        contour = torch.sin(torch.linspace(0, 6, 80))[None] * 0.3 + 0.05 * torch.randn(1, 80, generator=g)
+        voiced = torch.ones(1, 80, dtype=torch.bool)
+        mask = torch.ones(1, 80, dtype=torch.bool)
+        smoothed = TinyVoca.smooth_pitch(contour, voiced, mask, 5)
+        jumps = lambda x: x.diff(dim=1).abs().mean()
+        self.assertLess(float(jumps(smoothed)), 0.8 * float(jumps(contour)))
+        self.assertAlmostEqual(float(smoothed.std()), float(contour.std()), places=3)
+        padded = torch.cat((contour, torch.full((1, 20), 9.0)), 1)
+        padded_mask = torch.cat((mask, torch.zeros(1, 20, dtype=torch.bool)), 1)
+        again = TinyVoca.smooth_pitch(padded, torch.cat((voiced, padded_mask[:, 80:]), 1), padded_mask, 5)
+        self.assertLess(float((again[:, :80] - smoothed).abs().max()), 1e-5)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -39,7 +39,7 @@ from torch import nn
 import torch.nn.functional as F
 
 from .infer import load_model, match_frontend
-from .model import COMPRESSION, jitter_offset, pulse_gate
+from .model import COMPRESSION, PITCH_SMOOTH_FRAMES, jitter_offset, pulse_gate
 from .losses import VocosMel
 from .text import frontend_fingerprint, frontend_identity
 from .vocoder import load_vocoder
@@ -321,8 +321,9 @@ class Exportable(nn.Module):
         vowel = m.vowel_tokens[tokens].gather(1, index)
         voicing = torch.where(vowel, prosody[..., 1].clamp_min(2.0), prosody[..., 1])
         voiced = (voicing > 0).to(prosody.dtype)
-        mean = (prosody[..., 0] * voiced).sum(1, keepdim=True) / voiced.sum(1, keepdim=True).clamp_min(1)
-        pitch = mean + (prosody[..., 0] - mean) * pitch_range
+        log_f0 = m.smooth_pitch(prosody[..., 0], voicing > 0, frame_mask) if PITCH_SMOOTH_FRAMES > 1 else prosody[..., 0]
+        mean = (log_f0 * voiced).sum(1, keepdim=True) / voiced.sum(1, keepdim=True).clamp_min(1)
+        pitch = mean + (log_f0 - mean) * pitch_range
         condition = torch.stack((pitch.clamp(-2.0, 1.5), voiced, prosody[..., 2].clamp(-4.5, 3.0)), dim=-1)
         acoustic = m.acoustic_stack(prosody_hidden + m.prosody_projection(condition), frame_mask)
         f0 = (c.pitch_reference_hz * torch.exp(pitch + pitch_shift)).clamp(c.f0_min, c.f0_max)

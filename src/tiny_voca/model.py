@@ -22,6 +22,9 @@ from torch import nn
 from torch.nn import functional as F
 from .config import Config
 
+# Frames of the inference-time pitch smoothing (TinyVoca.smooth_pitch); 1 = off.
+PITCH_SMOOTH_FRAMES = 5
+
 
 def length_mask(lengths, size=None):
     size = int(lengths.max()) if size is None else size
@@ -545,6 +548,28 @@ class TinyVoca(nn.Module):
         return torch.cat((pitch[..., None], prosody[..., 1:]), dim=-1) * frame_mask[..., None]
 
     @staticmethod
+    def smooth_pitch(pitch, voiced, frame_mask, frames=PITCH_SMOOTH_FRAMES):
+        """Light low-pass of the predicted log-F0 contour [B, T] (Hann window of ``frames``),
+        then the voiced spread is restored so the intonation range is unchanged. The
+        predicted contour jitters frame to frame more than recorded pitch (heard as a
+        tremble, worst on EF3: 0.38 vs 0.28 semitones per frame); 5 frames matches the
+        recordings. Masked, so padding and batching do not change a row."""
+        if frames <= 1:
+            return pitch
+        window = torch.hann_window(frames + 2, periodic=False, dtype=pitch.dtype, device=pitch.device)[1:-1]
+        window = (window / window.sum()).view(1, 1, -1)
+        mask = frame_mask.to(pitch.dtype)[:, None]
+        smoothed = (F.conv1d(pitch[:, None] * mask, window, padding=frames // 2)
+                    / F.conv1d(mask, window, padding=frames // 2).clamp_min(1e-6))[:, 0]
+        weight = voiced.to(pitch.dtype) * frame_mask.to(pitch.dtype)
+        count = weight.sum(1, keepdim=True).clamp_min(1)
+        mean = (smoothed * weight).sum(1, keepdim=True) / count
+        spread = lambda x, m: (((x - m) ** 2 * weight).sum(1, keepdim=True) / count).sqrt()
+        original = (pitch * weight).sum(1, keepdim=True) / count
+        scale = spread(pitch, original) / spread(smoothed, mean).clamp_min(1e-6)
+        return torch.where(frame_mask, mean + (smoothed - mean) * scale, pitch)
+
+    @staticmethod
     def pitch_wobble(shape, semitones, seed, device):
         """Small random pitch movement for the oscillator only (log-F0 units).
         Recorded pitch has cycle-to-cycle irregularity that a predicted contour
@@ -557,7 +582,7 @@ class TinyVoca(nn.Module):
 
     @torch.inference_mode()
     def synthesize(self, tokens, stress, lengths, speakers, speed=1.0, pitch_shift=0.0, seed=0, pitch_range=1.0, pitch_jitter=0.0,
-                   voiced_vowels=True, emotions=None, intensities=None):
+                   voiced_vowels=True, emotions=None, intensities=None, pitch_smooth=PITCH_SMOOTH_FRAMES):
         """Free-running synthesis: predicted durations, pitch, voicing and energy."""
         if not math.isfinite(speed) or not 0.25 <= speed <= 4 or not math.isfinite(pitch_shift) or not 0 <= pitch_range <= 3:
             raise ValueError("speed must be between 0.25 and 4, pitch_shift finite and pitch_range between 0 and 3")
@@ -575,6 +600,9 @@ class TinyVoca(nn.Module):
             vowel = self.vowel_tokens[tokens].gather(1, owner) & frame_mask
             prosody = torch.cat((prosody[..., :1], torch.where(vowel, prosody[..., 1].clamp_min(2.0), prosody[..., 1])[..., None],
                                  prosody[..., 2:]), dim=-1)
+        if pitch_smooth > 1:
+            smoothed = self.smooth_pitch(prosody[..., 0], prosody[..., 1] > 0, frame_mask, pitch_smooth)
+            prosody = torch.cat((smoothed[..., None], prosody[..., 1:]), dim=-1)
         prosody = self.widen_pitch(prosody, frame_mask, pitch_range)
         acoustic = self.decode(prosody_hidden, self.hard_prosody(prosody), frame_mask)
         # One noise stream per row, drawn at the row's own length, so batching or

@@ -922,3 +922,28 @@ From now on decisions are made and recorded here, without waiting for approval.
     checkpoints every 1k steps.
   - It will be judged per voice on model spectrograms with the per-voice gains,
     plus a small sweep of IT1 gain below 0.05.
+- **EF3 "tremble" (23:10):**
+  - Report: the listener heard EF3 trembling at times.
+  - Measured on 12–14 test sentences, predicted pitch vs the recordings:
+
+    | | frame-to-frame jump (st) | wobble (st) |
+    |---|---|---|
+    | EF3 model | 0.372 | 0.409 |
+    | EF3 real | 0.278 | 0.287 |
+    | IT1 model | 0.376 | 0.384 |
+    | IT1 real | 0.311 | 0.334 |
+
+    Wobble is the residual of a 9-frame moving average.
+  - Spectral balance is not the cause: EF3 is within ±0.4 dB of the real clips
+    in every band except −2.3 dB at 4–6 kHz.
+  - Probable cause: the pitch-spread loss (weight 4) is satisfied partly by
+    frame-level wiggle rather than intonation. The predicted spread is still
+    below real (EF3 2.0 vs 2.8 st).
+  - Fix at inference time: `TinyVoca.smooth_pitch`, a 5-frame Hann low-pass of
+    log F0 that restores the voiced spread. It is in PyTorch and in the ONNX
+    graph (`PITCH_SMOOTH_FRAMES`).
+  - After the fix: EF3 0.268 / 0.322, IT1 0.274 / 0.296. Blind S files sent; key
+    `smooth-key.json`.
+  - Next voice round: add a pitch-delta loss (match the frame-to-frame change to
+    the recordings) so the model learns intonation, not jitter. Also consider
+    pitch_range around 1.2, since spread is about 70% of real.
