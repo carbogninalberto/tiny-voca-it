@@ -112,6 +112,12 @@
   "disgust"
  ],
  "vocoder_step": 200000,
+ "vocoder_voice_high_gain": [
+  [
+   "IT1",
+   0.0
+  ]
+ ],
  "language": "it",
  "locale": "it-IT",
  "profile_version": 1,
