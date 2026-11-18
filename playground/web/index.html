@@ -322,7 +322,9 @@ const SAMPLES = [
   ["Lungo", "Quando finalmente arrivammo in cima alla montagna, il sole stava tramontando e l'aria era fresca e limpida."],
   ["Bar", "Buongiorno, vorrei un cappuccino e un cornetto, per favore."],
 ];
-const VOICE_INFO = { IT1: "male · audiobook reader", EF3: "female · synthetic" };
+// Display names of the product voices (internal speaker IDs stay as stored in the model).
+const VOICE_INFO = { EM4: ["Lorenzo", "male · soft, warm"], EF4: ["Chiara", "female · calm, assured"],
+                     IT1: ["IT1", "male · audiobook reader"], EF3: ["EF3", "female · synthetic"] };
 const $ = (id) => document.getElementById(id);
 const controls = { speed: [1, v => `${(+v).toFixed(2)}×`], pitch: [0, v => `${v > 0 ? "+" : ""}${v} st`], range: [1, v => (+v).toFixed(2)],
                    intensity: [0, v => (+v).toFixed(2)] };
@@ -363,7 +365,7 @@ function speak() {
   showError("");
   pending = { id: ++request, text, model: selected(), speed: +$("speed").value, pitch: +$("pitch").value, range: +$("range").value,
               voice: voiceIndex, emotion: +($("emotion").value || 0), intensity: $("emotion-box").hidden ? 0 : +$("intensity").value };
-  pending.speakerName = document.querySelector('.voice[aria-pressed="true"]')?.dataset.name || "";
+  pending.speakerName = document.querySelector('.voice[aria-pressed="true"]')?.dataset.label || "";
   $("speak").disabled = true; $("speak").textContent = "…";
   player.begin(pending.id);
   worker.postMessage({ type: "speak", ...pending, model: undefined });
@@ -493,7 +495,8 @@ function setVoices(names, preferred) {
   const keep = offered.find(([v]) => v === (document.querySelector('.voice[aria-pressed="true"]')?.dataset.name || preferred)) || offered[0];
   $("voices").replaceChildren(...offered.map(([name, index]) => {
     const b = document.createElement("button"); b.className = "voice"; b.dataset.name = name;
-    b.innerHTML = `${name}<small>${VOICE_INFO[name] || ""}</small>`;
+    const [label, about] = VOICE_INFO[name] || [name, ""];
+    b.innerHTML = `${label}<small>${about}</small>`; b.dataset.label = label;
     b.setAttribute("aria-pressed", String(name === keep[0]));
     b.onclick = () => { voiceIndex = index; document.querySelectorAll(".voice").forEach(x => x.setAttribute("aria-pressed", String(x === b))); };
     return b;

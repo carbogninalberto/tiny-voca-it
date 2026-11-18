@@ -998,3 +998,6 @@ From now on decisions are made and recorded here, without waiting for approval.
     per-emotion pitch, energy and rate statistics will judge it.
 - **Folded in:** the paused round 7 (pitch-change loss, weight 10) becomes part of
   this voice fine-tune.
+- **Display names:** EM4 is shown as **Lorenzo** and EF4 as **Chiara** on the page,
+  the playground and in the README. The internal speaker IDs stay EM4/EF4, so the
+  running, resumable data stages are not disturbed.
