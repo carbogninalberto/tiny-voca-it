@@ -210,7 +210,7 @@
   <section id="playground" class="reveal">
     <div class="eyebrow">01 · Playground</div>
     <h2>Type Italian, hear it instantly</h2>
-    <p class="sub">The first visit downloads the model (about 47 MB), then it is cached. Audio plays as soon as it is ready; the waveform follows playback and stops with it.</p>
+    <p class="sub">The first visit downloads the model (about 47 MB), then it is cached. Audio streams: playback starts after the first sentence while the rest is still being synthesised. The waveform grows with the audio and stops with it.</p>
     <div class="play">
       <div class="card editor">
         <div>
@@ -270,7 +270,7 @@
 
   <section id="benchmarks" class="reveal">
     <div class="eyebrow">03 · Benchmarks</div>
-    <h2>Measured on a public Italian test set</h2>
+    <h2>Large-model intelligibility, at 6.8M parameters</h2>
     <p class="sub" id="bench-sub">Italian split of the <a href="https://huggingface.co/datasets/MiniMaxAI/TTS-Multilingual-Test-Set">MiniMax TTS Multilingual Test Set</a>
       (100 sentences). Word error rate from Whisper-large-v3; lower is better. Other systems' numbers are copied from their papers.</p>
     <div class="kpis" id="kpis"></div>
@@ -360,11 +360,12 @@ function speak() {
   if (!ready || pending) return;
   const text = $("text").value.trim();
   if (!text) return showError("Scrivi un testo.");
-  showError(""); player.stop();
+  showError("");
   pending = { id: ++request, text, model: selected(), speed: +$("speed").value, pitch: +$("pitch").value, range: +$("range").value,
               voice: voiceIndex, emotion: +($("emotion").value || 0), intensity: $("emotion-box").hidden ? 0 : +$("intensity").value };
   pending.speakerName = document.querySelector('.voice[aria-pressed="true"]')?.dataset.name || "";
   $("speak").disabled = true; $("speak").textContent = "…";
+  player.begin(pending.id);
   worker.postMessage({ type: "speak", ...pending, model: undefined });
 }
 
@@ -383,55 +384,93 @@ function wav(samples, rate) {
   return new Blob([buffer], { type: "audio/wav" });
 }
 
-/* Waveform player: draws the clip's envelope, sweeps a playhead and pulses the live level while playing; stops with playback. */
+/* Player. Streaming: chunks from the worker are scheduled back to back with Web Audio as they arrive (playback starts after
+   the first sentence). Replay: a finished take plays through an <audio> element. Both feed one analyser; the waveform
+   grows with the received audio, a playhead follows playback, and the animation stops when playback stops. */
 const player = (() => {
-  const canvas = $("wave"), ctx = canvas.getContext("2d"), audio = new Audio();
-  let peaks = null, raf = 0, audioContext = null, analyser = null, level = 0;
+  const canvas = $("wave"), ctx2d = canvas.getContext("2d"), audio = new Audio();
+  let ac = null, analyser = null, level = 0, raf = 0, mode = "idle";
+  let peaks = [], received = 0, rate = 24000;                   // waveform: one peak per 512 samples
+  let stream = null;                                            // {id, nodes, t0, next, gain, finished}
   const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-  function size() { const r = canvas.getBoundingClientRect(), d = devicePixelRatio || 1; canvas.width = r.width * d; canvas.height = r.height * d; }
-  function computePeaks(samples, n) {
-    const out = new Float32Array(n), step = samples.length / n;
-    for (let i = 0; i < n; i++) { let m = 0; for (let j = Math.floor(i * step), e = Math.floor((i + 1) * step); j < e; j++) m = Math.max(m, Math.abs(samples[j])); out[i] = m; }
-    const top = Math.max(...out, 1e-6); return out.map(v => Math.pow(v / top, 0.7));
-  }
-  function draw() {
-    const w = canvas.width, h = canvas.height, d = devicePixelRatio || 1; ctx.clearRect(0, 0, w, h);
-    if (!peaks) return;
-    const bar = 3 * d, gap = 2 * d, n = Math.floor(w / (bar + gap)), at = audio.duration ? audio.currentTime / audio.duration : 0;
-    const playing = !audio.paused && !audio.ended;
-    for (let i = 0; i < n; i++) {
-      const v = peaks[Math.floor(i / n * peaks.length)], x = i * (bar + gap), past = i / n <= at;
-      const near = playing && Math.abs(i / n - at) < 0.02 ? 1 + level * 0.9 : 1;
-      const bh = Math.max(2 * d, v * (h * 0.78) * near);
-      ctx.fillStyle = past ? css("--p300") : "#ffffff2e";
-      ctx.beginPath(); ctx.roundRect(x, (h - bh) / 2, bar, bh, bar / 2); ctx.fill();
+  function context() {
+    if (!ac) {
+      ac = new AudioContext(); analyser = ac.createAnalyser(); analyser.fftSize = 1024; analyser.connect(ac.destination);
+      ac.createMediaElementSource(audio).connect(analyser);
     }
-    if (audio.duration) { ctx.fillStyle = css("--p50"); ctx.fillRect(Math.round(at * w), 0, d, h); }
+    if (ac.state === "suspended") ac.resume();
+    return ac;
+  }
+  function size() { const r = canvas.getBoundingClientRect(), d = devicePixelRatio || 1; canvas.width = r.width * d; canvas.height = r.height * d; }
+  function addPeaks(samples) { for (let i = 0; i < samples.length; i += 512) { let m = 0; for (let j = i, e = Math.min(i + 512, samples.length); j < e; j++) m = Math.max(m, Math.abs(samples[j])); peaks.push(m); } received += samples.length; }
+  function position() {
+    if (mode === "stream" && stream) return Math.max(0, ac.currentTime - stream.t0) * rate / Math.max(1, received);
+    if (mode === "replay" && audio.duration) return audio.currentTime / audio.duration;
+    return 0;
+  }
+  function playing() { return mode === "stream" ? !!stream && (!stream.finished || ac.currentTime < stream.next) : mode === "replay" && !audio.paused && !audio.ended; }
+  function draw() {
+    const w = canvas.width, h = canvas.height, d = devicePixelRatio || 1; ctx2d.clearRect(0, 0, w, h);
+    if (!peaks.length) return;
+    const top = Math.max(...peaks, 1e-6), bar = 3 * d, gap = 2 * d, n = Math.floor(w / (bar + gap)), at = Math.min(1, position()), live = playing();
+    for (let i = 0; i < n; i++) {
+      const v = Math.pow(peaks[Math.floor(i / n * peaks.length)] / top, 0.7), x = i * (bar + gap), past = i / n <= at;
+      const near = live && Math.abs(i / n - at) < 0.02 ? 1 + level * 0.9 : 1;
+      const bh = Math.max(2 * d, v * h * 0.78 * near);
+      ctx2d.fillStyle = past ? css("--p300") : "#ffffff2e";
+      ctx2d.beginPath(); ctx2d.roundRect(x, (h - bh) / 2, bar, bh, bar / 2); ctx2d.fill();
+    }
+    if (at > 0) { ctx2d.fillStyle = css("--p50"); ctx2d.fillRect(Math.round(at * w), 0, d, h); }
   }
   function loop() {
     if (analyser) { const a = new Uint8Array(analyser.fftSize); analyser.getByteTimeDomainData(a); let s = 0; for (const v of a) s += ((v - 128) / 128) ** 2; level = Math.min(1, Math.sqrt(s / a.length) * 4); }
-    draw(); raf = (!audio.paused && !audio.ended) ? requestAnimationFrame(loop) : 0;
-    if (!raf) { level = 0; draw(); playingUI(false); }
+    draw();
+    if (playing()) raf = requestAnimationFrame(loop);
+    else { raf = 0; level = 0; draw(); ui(false); }
   }
-  function playingUI(on) { $("stop").hidden = !on; document.querySelectorAll(".take .pp").forEach(b => b.textContent = b.dataset.url === audio.src && on ? "❚❚" : "▶"); }
-  audio.addEventListener("play", () => { playingUI(true); cancelAnimationFrame(raf); raf = requestAnimationFrame(loop); });
+  function run() { ui(true); if (!raf) raf = requestAnimationFrame(loop); }
+  function ui(on) {
+    $("stop").hidden = !on;
+    document.querySelectorAll(".take .pp").forEach(b => b.textContent = on && mode === "replay" && b.dataset.url === audio.src ? "❚❚" : "▶");
+  }
+  function stopAll() {
+    if (stream) { for (const node of stream.nodes) try { node.stop(); } catch (e) {} stream.finished = true; stream.next = 0; }
+    audio.pause();
+  }
+  audio.addEventListener("play", run);
   addEventListener("resize", () => { size(); draw(); });
   return {
-    load(samples, url) {
-      $("wave-idle").hidden = true; size(); peaks = computePeaks(samples, 600); audio.src = url;
-      try {
-        if (!audioContext) { audioContext = new AudioContext(); analyser = audioContext.createAnalyser(); analyser.fftSize = 1024;
-          audioContext.createMediaElementSource(audio).connect(analyser); analyser.connect(audioContext.destination); }
-        audioContext.resume();
-      } catch (e) { analyser = null; }
-      draw();
+    begin(id) {             // a new request: clear the waveform and get ready to schedule chunks
+      stopAll(); context(); mode = "stream"; peaks = []; received = 0; size();
+      stream = { id, nodes: [], t0: 0, next: 0, gain: null, finished: false };
+      $("wave-idle").hidden = true; draw();
     },
-    play() { audio.currentTime = 0; audio.play().catch(() => setStatus("Press ▶ on the take to listen (autoplay blocked)", null, true)); },
-    stop() { audio.pause(); },
-    toggle(samples, url) { if (audio.src === url && !audio.paused) return audio.pause(); if (audio.src !== url) this.load(samples, url); this.play(); },
+    chunk(data) {
+      if (!stream || data.id !== stream.id || stream.finished) return;
+      rate = data.sampleRate; const s = data.audio;
+      let peak = 0, sum = 0; for (const v of s) { peak = Math.max(peak, Math.abs(v)); sum += v * v; }
+      // Same playback level as the reference samples (RMS 0.1, about -20 LUFS), fixed from the first chunk; peaks at most 0.95.
+      if (stream.gain == null) stream.gain = Math.min(0.1 / Math.max(Math.sqrt(sum / Math.max(1, s.length)), 1e-6), 3);
+      const g = Math.min(stream.gain, 0.95 / Math.max(peak, 1e-6));
+      const buffer = ac.createBuffer(1, s.length, rate), out = buffer.getChannelData(0);
+      for (let i = 0; i < s.length; i++) out[i] = s[i] * g;
+      const node = ac.createBufferSource(); node.buffer = buffer; node.connect(analyser);
+      const when = Math.max(ac.currentTime + 0.04, stream.next);
+      if (!stream.nodes.length) stream.t0 = when;
+      node.start(when); stream.next = when + s.length / rate; stream.nodes.push(node);
+      addPeaks(s); run();
+    },
+    end(id) { if (stream && stream.id === id) stream.finished = true; },
+    replay(samples, url) {
+      if (mode === "replay" && audio.src === url && !audio.paused) return audio.pause();
+      stopAll(); context(); mode = "replay"; peaks = []; received = 0; addPeaks(samples); size();
+      $("wave-idle").hidden = true; if (audio.src !== url) audio.src = url; audio.currentTime = 0; audio.play().catch(() => {});
+    },
+    stop() { stopAll(); },
+    streaming() { return mode === "stream" && playing(); },
   };
 })();
-$("stop").onclick = () => player.stop();
+$("stop").onclick = () => { if (pending) worker.postMessage({ type: "cancel", id: pending.id }); player.stop(); };
 
 function addTake(job, data) {
   const seconds = data.audio.length / data.sampleRate;
@@ -439,15 +478,14 @@ function addTake(job, data) {
   const take = document.createElement("div");
   take.className = "card take";
   take.innerHTML = `<button class="pp" title="Play">▶</button><div><div class="t"></div>
-    <div class="f">${job.speakerName ? job.speakerName + " · " : ""}${seconds.toFixed(1)} s audio · ${(data.totalTime / 1000).toFixed(2)} s in browser
-    (${Math.round(seconds / (data.totalTime / 1000))}× real time)</div></div><a download="tiny-voca-it.wav">wav ↓</a>`;
+    <div class="f">${job.speakerName ? job.speakerName + " · " : ""}${seconds.toFixed(1)} s audio · first audio in ${(data.firstAudio / 1000).toFixed(2)} s ·
+    all in ${(data.totalTime / 1000).toFixed(2)} s (${Math.round(seconds / (data.totalTime / 1000))}× real time)</div></div><a download="tiny-voca-it.wav">wav ↓</a>`;
   take.querySelector(".t").textContent = job.text;
   const pp = take.querySelector(".pp"); pp.dataset.url = url;
-  pp.onclick = () => player.toggle(data.audio, url);
+  pp.onclick = () => player.replay(data.audio, url);
   take.querySelector("a").href = url;
   $("history").prepend(take);
   while ($("history").children.length > 6) $("history").lastChild.remove();
-  player.load(data.audio, url); player.play();
 }
 
 function setVoices(names, preferred) {
@@ -472,11 +510,19 @@ worker.onmessage = ({ data }) => {
     $("emotion").replaceChildren(...data.emotions.map((e, i) => new Option(e, i)));
     $("emotion-box").hidden = $("intensity-box").hidden = !data.emotions.length;
   }
-  else if (data.type === "sentence") setStatus(`Speaking… sentence ${data.index + 1} / ${data.total}`);
+  else if (data.type === "chunk") {
+    player.chunk(data);
+    if (data.index === 0) setStatus(`Streaming · first audio after ${(data.firstAudio / 1000).toFixed(2)} s`, null, true);
+  }
+  else if (data.type === "sentence") { if (data.total > 1) setStatus(`Streaming · sentence ${data.index + 1} / ${data.total} ready`, null, true); }
   else if (data.type === "done") {
-    const job = pending; pending = null;
-    $("speak").disabled = false; $("speak").textContent = "▶ Parla"; setStatus("Ready", null, true);
+    const job = pending; pending = null; player.end(data.id);
+    $("speak").disabled = false; $("speak").textContent = "▶ Parla";
+    setStatus(`Ready · first audio after ${(data.firstAudio / 1000).toFixed(2)} s`, null, true);
     addTake(job, data);
+  }
+  else if (data.type === "cancelled") {
+    pending = null; $("speak").disabled = false; $("speak").textContent = "▶ Parla"; setStatus("Stopped", null, true);
   } else if (data.type === "error") {
     pending = null; $("speak").disabled = !ready; $("speak").textContent = "▶ Parla";
     showError(data.message); setStatus(ready ? "Ready" : "Could not load", null, ready);
@@ -505,7 +551,7 @@ fetch("site.json").then(r => r.json()).then(site => {
   $("kpis").innerHTML = (b.kpis || []).map(k => `<div class="card kpi"><b>${esc(k.value)}</b><span>${esc(k.label)}</span></div>`).join("");
   $("bench-table").innerHTML = `<thead><tr><th>System</th><th class="n">Params</th><th class="n">WER % ↓</th><th class="n">SIM ↑</th><th>Source</th></tr></thead><tbody>` +
     b.rows.map(r => `<tr class="${r.ours ? "ours" : ""}"><td>${esc(r.system)}${r.ours ? '<span class="tag">this model</span>' : ""}</td>
-      <td class="n">${esc(r.params)}</td><td class="n">${r.wer == null ? "–" : r.wer.toFixed(2)}</td><td class="n">${r.sim == null ? "n/a" : r.sim.toFixed(3)}</td>
+      <td class="n">${esc(r.params)}</td><td class="n">${r.wer == null ? "–" : r.wer.toFixed(2)}${r.wer_ci ? `<br><span style="color:var(--dim);font-size:11px">95% ${r.wer_ci[0].toFixed(2)}–${r.wer_ci[1].toFixed(2)}</span>` : ""}</td><td class="n">${r.sim == null ? "n/a" : r.sim.toFixed(3)}</td>
       <td style="color:var(--muted);font-size:13px">${esc(r.source)}</td></tr>`).join("") + "</tbody>";
   const top = Math.max(...b.rows.map(r => r.wer || 0));
   $("bench-bars").innerHTML = `<div class="label" style="margin-bottom:10px">Word error rate, lower is better</div>` + b.rows.filter(r => r.wer != null).map(r =>

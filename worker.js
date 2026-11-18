@@ -110,6 +110,10 @@ async function synthesize(phones, { speed, pitch, range, voice = 0, emotion = 0,
   return output.audio.data;
 }
 
+// Streaming: every utterance is posted as soon as it is synthesised ("chunk"), so playback starts after the
+// first sentence instead of the whole text. "done" still carries the full audio (history, download).
+const cancelled = new Set();
+
 async function speak(request) {
   const started = performance.now();
   const list = sentences(request.text);
@@ -117,17 +121,23 @@ async function speak(request) {
   const rate = current.metadata.sample_rate;
   const pause = new Float32Array(Math.round(0.25 * rate));
   const chunks = [], phonemes = [];
-  let phonemeTime = 0, modelTime = 0;
+  let phonemeTime = 0, modelTime = 0, firstAudio = null, sent = 0;
   for (let index = 0; index < list.length; index++) {
     let mark = performance.now();
     const utterances = await fit(list[index]);
     phonemeTime += performance.now() - mark;
     for (const phones of utterances) {
+      if (cancelled.has(request.id)) { cancelled.delete(request.id); postMessage({ type: "cancelled", id: request.id }); return; }
       mark = performance.now();
       const audio = await synthesize(phones, request);
       modelTime += performance.now() - mark;
-      if (chunks.length) chunks.push(pause);
+      const lead = chunks.length ? pause : null;
+      if (lead) chunks.push(lead);
       chunks.push(audio);
+      const piece = new Float32Array((lead ? lead.length : 0) + audio.length);
+      piece.set(audio, lead ? lead.length : 0);
+      if (firstAudio == null) firstAudio = performance.now() - started;
+      postMessage({ type: "chunk", id: request.id, index: sent++, audio: piece, sampleRate: rate, firstAudio }, [piece.buffer]);
       phonemes.push(phones.symbols.filter((s) => !s.startsWith("<") || s === "<sp>").join(" ").replaceAll("<sp>", "·"));
       if (phones.unknown.length) phonemes.push(`(unknown: ${phones.unknown.join(" ")})`);
     }
@@ -137,7 +147,7 @@ async function speak(request) {
   const audio = new Float32Array(length);
   let offset = 0;
   for (const chunk of chunks) { audio.set(chunk, offset); offset += chunk.length; }
-  postMessage({ type: "done", id: request.id, audio, sampleRate: rate, phonemes: phonemes.join(" | "), phonemeTime, modelTime,
+  postMessage({ type: "done", id: request.id, audio, sampleRate: rate, phonemes: phonemes.join(" | "), phonemeTime, modelTime, firstAudio,
                 totalTime: performance.now() - started }, [audio.buffer]);
 }
 
@@ -149,6 +159,8 @@ onmessage = async ({ data }) => {
                     voices: current.metadata.voices, emotions: current.metadata.emotions || [] });
     } else if (data.type === "speak") {
       await speak(data);
+    } else if (data.type === "cancel") {
+      cancelled.add(data.id);
     }
   } catch (error) {
     postMessage({ type: "error", id: data.id, message: String((error && error.message) || error) });
