@@ -787,3 +787,14 @@ From now on decisions are made and recorded here, without waiting for approval.
     a fine-tune that starts from an existing model, and 3.6 h is ~45% of IT1's
     training audio. If EF3 comes out mispronouncing words or unstable, generate
     more rather than loosen the gate.
+- **Post-production pilot (16:15):**
+  - Setup: blind test on the voice-two checkpoint at step 122,790, IT1 + EF3, all
+    variants at the same loudness. The variants were the raw output, a de-harsh
+    EQ, multiband compression, and multiband + full-band compression + small room
+    reverb.
+  - Result: the listener picked P2, which was the **raw** output for both voices.
+  - Decision: no post-processing in the output path. Static EQ and dynamics do not
+    remove the metallic trace; they only colour the voice. The fix stays in the
+    models (the vocoder high-band prior, the voice loss above 2 kHz).
+  - Why lower playback volume sounds less metallic: masking at the ear, not a
+    property of the audio.
