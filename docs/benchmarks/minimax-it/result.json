@@ -20,5 +20,12 @@
  },
  "voice_checkpoint": "runs/voice-two/inference-115000.pt",
  "vocoder_checkpoint": "runs/vocoder-three/vocoder-voicegain.pt (210k, IT1 high-band gain 0.0)",
- "asr": "faster-whisper large-v3, beam 5"
+ "asr": "faster-whisper large-v3, beam 5",
+ "wer_ci95": [
+  0.37,
+  1.35
+ ],
+ "words": 2613,
+ "ci_method": "bootstrap over the 100 lines, 2000 resamples",
+ "training_overlap": "0 of 164 benchmark sentences appear in the training texts"
 }

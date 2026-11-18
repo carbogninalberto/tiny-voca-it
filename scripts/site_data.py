@@ -24,7 +24,8 @@ ROADMAP = [
     {"state": "done", "title": "Neural vocoder with a harmonic prior", "when": "Nov 2026", "text": "Replaced the buzzy DSP output; phase from a pitch-driven pulse train, distilled from Vocos."},
     {"state": "done", "title": "Two product voices: IT1 and EF3", "when": "18 Nov", "text": "6 h of EF3 data generated and screened; voice model fine-tuned on both voices (EF3 mel error -33%)."},
     {"state": "done", "title": "Less metallic, no tremble", "when": "18 Nov", "text": "Retrained vocoder with a per-voice high-band pulse share; 5-frame pitch smoothing. Both preferred in blind tests."},
-    {"state": "now", "title": "Benchmarks and vocoder over a range of pulse shares", "when": "now", "text": "Public Italian benchmark (this page); vocoder fine-tuned so every per-voice setting is in distribution."},
+    {"state": "done", "title": "Public benchmark and vocoder over a range of pulse shares", "when": "19 Nov", "text": "MiniMax Italian test set (this page); vocoder fine-tuned so every per-voice setting is in distribution."},
+    {"state": "now", "title": "Streaming", "when": "now", "text": "Sentence-level streaming in the browser: playback starts after the first sentence while the rest is synthesised. Next: chunked streaming inside long sentences, and a Python streaming API."},
     {"state": "next", "title": "Voice model: intonation and texture", "when": "next", "text": "A pitch-delta loss (intonation instead of jitter), wider pitch range (now ~70% of real speech), a noise-tolerant loss above 2 kHz."},
     {"state": "next", "title": "Better text normalisation", "when": "planned", "text": "Numbers, dates, prices and abbreviations read the Italian way."},
     {"state": "next", "title": "Release", "when": "planned", "text": "Checkpoints, ONNX model and a model card; optional fine-tuning to a new voice from about 30 minutes of audio."},
@@ -43,11 +44,11 @@ def main():
     synth = [json.loads(l) for l in (a.synth or a.result.parent / "synth.jsonl").read_text().splitlines()]
     rtf = sum(x["compute_seconds"] for x in synth) / sum(x["audio_seconds"] for x in synth)
     ours = {"system": "tiny-voca-it (IT1 + EF3)", "short": "tiny-voca-it", "params": "6.8M", "wer": r["wer"], "sim": None, "ours": True,
-            "source": "measured, this repository"}
+            "wer_ci": r.get("wer_ci95"), "source": "measured, this repository (fixed voices, not cloning)"}
     rows = sorted(PUBLISHED + [ours], key=lambda x: x["wer"])
     site = {
         "updated": datetime.now(ZoneInfo("Europe/Rome")).strftime("%Y-%m-%d %H:%M") + " CET",
-        "pill": f"{r['wer']:.2f}% WER on the public MiniMax Italian test set",
+        "pill": "Large-model intelligibility at 6.8M parameters",
         "benchmark": {
             "ours": {"wer": r["wer"], "rtf": 1 / (r.get("cpu", {}).get("x_real_time") or 1 / rtf)},
             "kpis": [
@@ -60,6 +61,10 @@ def main():
             "notes": [
                 f"WER by voice: IT1 {r['wer_by_voice']['IT1']:.2f}%, EF3 {r['wer_by_voice']['EF3']:.2f}%. Without the {r['lines_with_digits']} lines that contain digits: {r['wer_without_digits']:.2f}% "
                 f"(lines with digits: {r['wer_lines_with_digits']:.1f}%; our text normalisation does not expand numbers yet).",
+                "WER measures intelligibility only: every word understood. It says nothing about naturalness, intonation or the slight metallic "
+                "trace, where the 0.6–2B models are clearly ahead; no paper reports an Italian listening (MOS) score on this set.",
+                f"Our 95% interval ({r['wer_ci95'][0]:.2f}–{r['wer_ci95'][1]:.2f}%, bootstrap over the 100 lines, {r['words']} words) overlaps several systems: "
+                "statistically the same band, not a clear first place. None of the 164 benchmark sentences is in our training texts.",
                 "Not an identical task: the other systems clone two Common Voice reference speakers zero-shot, which is harder than speaking "
                 "in voices the model was trained on. Read the table as intelligibility at a given size, not as a ranking of voice cloning. "
                 "SIM (similarity to the reference speaker) therefore does not apply to tiny-voca-it.",
