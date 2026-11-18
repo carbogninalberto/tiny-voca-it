@@ -712,8 +712,64 @@ error above 1 kHz):
 **Round 5** (`scripts/training/round5.sh`):
 
 1. EF3 data, features and alignment.
-2. Fine-tune on IT1 + EF3 + the emotion set, 20k steps, adversarial with the mel
-   critic, from the best round-4 checkpoint.
+2. Fine-tune on IT1 + EF3 + the emotion set, 20k steps, adversarial ratio 0.7, no mel
+   critic, from adversarial 113k. Round 4 scored 0.804 / 0.75 detail vs 0.802 / 0.78.
 3. Vocoder 180k → 200k on IT1 + EF3, with the high-band prior.
 
 The planned 15k-step high-band vocoder run on all voices (§6.4) is replaced by step 3.
+
+### 6.6 Decision log (round 5, 18 November)
+
+From now on decisions are made and recorded here, without waiting for approval.
+
+- **Round 4 base: adversarial 113k.**
+  - The mel-critic run scored 0.804 / detail 0.75 vs 0.802 / 0.78. The mel critic
+    stays in the code, off.
+  - A review notes the test was confounded: one critic of nine, averaged, on short
+    crops. So this is not evidence that mel critics fail.
+- **EF3 generation throughput.**
+  - The Qwen3-TTS clone loop is bound by one CPU core: a nested HF `generate()` per
+    codec frame, with the GPU at 10–30%.
+  - Benchmark, audio seconds per wall second:
+
+    | Batch | 2 | 4 | 8 | 16 | 24 |
+    |---|---|---|---|---|---|
+    | Speed | 0.56 | 0.95 | 1.57 | 3.08 | 3.33 |
+
+  - Two processes only time-slice the GPU, and three ran out of memory.
+  - Default length cap of 2,048 frames: one runaway clip held a batch for minutes.
+  - **Chosen:** one process, batch 20, length cap 2 × expected + 3 s, batches sorted
+    by length, Whisper screening on the GPU in a worker thread overlapped with the
+    next batch.
+  - Whisper on CPU int8 was slower than generation and stalled it.
+  - Result: 26 clips/min (about 2.2× real time), up from 4–12. Target 6 h.
+- **EF3 splits:**
+  - **Leakage fixed.** Sentences that are training sentences of another voice stay in
+    train (`check_leakage` would have aborted the fine-tune).
+  - **Validation sentences.** Validation sentences of the other voices are added to
+    the pool and routed to EF3 validation, giving a per-voice validation set.
+  - **Training gates:** WER ≤ 0.1 and 11–17 characters/s. The manifest keeps
+    everything screened.
+- **Emotion set:** the VoiceDesign EF3 *neutral* clips (drifting timbre, about 3 dB
+  louder) are dropped from training, so the clone defines EF3's neutral voice. The
+  emotional EF3 clips stay.
+- **Voice recipe:**
+  - Kept the 113k recipe: adversarial ratio 0.7, feature matching 30. Only the data
+    changes.
+  - The review notes that feature matching dominates the GAN term and that the ratio
+    excludes the ×10 Vocos-mel loss. To revisit once the two-voice result is in.
+- **Vocoder:**
+  - mel weight 15 instead of 45. The review notes the critics are averaged over 8
+    networks, about 8× weaker than Vocos's sum, a plausible cause of the high-band
+    over-locking.
+  - This is combined with the high-band prior change and the removal of paired
+    training, so the effects are confounded. It is judged on pulse locking and blind
+    listening.
+- **Durable libraries:** `qwen_tts`, `vocos` and friends are copied to
+  `~/.local/share/tiny-voca-libs` (`EXTRA_LIBS_DIR`), out of the temporary
+  scratchpad.
+- **Texture test** (CPU, while the GPU generates). Hypothesis: point-wise L1 on log
+  spectra punishes noise texture, so the model airbrushes the highs. Test on 3 IT1
+  clips: real / model / model + real-statistics texture above 2 kHz / model
+  unsharp-masked above 1 kHz. Blind files sent; if texture helps, the next voice
+  round changes the loss above 2 kHz.
