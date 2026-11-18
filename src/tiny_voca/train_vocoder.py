@@ -177,6 +177,8 @@ def main():
                         "wave: multi-resolution complex-STFT distance between the two waveforms")
     parser.add_argument("--fresh-schedule", action="store_true", help="With --init-from: warm-up and cosine restart at the start step")
     parser.add_argument("--prior", action="store_true", help="Harmonic-prior vocoder: phase from a pulse train built from the pitch")
+    parser.add_argument("--prior-high-hz", type=float, default=0.0, help="Weaken the prior's pulses above this frequency (0 = off)")
+    parser.add_argument("--prior-high-gain", type=float, default=1.0, help="Pulse share at twice --prior-high-hz and above")
     parser.add_argument("--pairs", nargs="*", default=[], help="tiny_voca.vocoder_pairs manifests: the voice model's own spectrograms")
     parser.add_argument("--pair-fraction", type=float, default=0.7, help="Share of paired clips that use the voice model's spectrogram")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
@@ -189,7 +191,8 @@ def main():
     torch.backends.cudnn.benchmark = True
     args.output.mkdir(parents=True, exist_ok=True)
 
-    config = VocoderConfig(channels=args.channels, intermediate=args.intermediate, layers=args.layers, prior=args.prior)
+    config = VocoderConfig(channels=args.channels, intermediate=args.intermediate, layers=args.layers, prior=args.prior,
+                           prior_high_hz=args.prior_high_hz, prior_high_gain=args.prior_high_gain)
     vocoder = Vocoder(config).to(args.device)
     critics = Discriminators().to(args.device)
     features = VocosMel(config.sample_rate, config.fft, config.hop, config.bands).to(args.device)
@@ -207,7 +210,10 @@ def main():
         source = VocoderConfig.from_dict(state["config"])
         if args.resume and source != config:
             raise ValueError("resume configuration differs")
-        if source == config:
+        same_weights = VocoderConfig(**{**source.to_dict(), "prior_high_hz": 0.0, "prior_high_gain": 1.0}) == \
+            VocoderConfig(**{**config.to_dict(), "prior_high_hz": 0.0, "prior_high_gain": 1.0})
+        if source == config or (args.init_from and same_weights):
+            # The high-band pulse weight changes only the prior, not the weights: a branch keeps everything.
             vocoder.load_state_dict(state["vocoder"])
             optimizer_g.load_state_dict(state["optimizer_g"])
         elif args.init_from and source == VocoderConfig(**{**config.to_dict(), "prior": False}) and config.prior:

@@ -72,26 +72,28 @@ class ExportTest(unittest.TestCase):
                     self.assertLess(float(np.abs(audio - reference.numpy()).max()), 2e-2 * float(reference.abs().max()))
 
 
-def small_vocoder():
+def small_vocoder(high_hz=0.0):
     torch.manual_seed(1)
-    vocoder = Vocoder(VocoderConfig(channels=32, intermediate=64, layers=2, prior=True, prior_noise=0.0)).eval()
+    vocoder = Vocoder(VocoderConfig(channels=32, intermediate=64, layers=2, prior=True, prior_noise=0.0,
+                                    prior_high_hz=high_hz, prior_high_gain=0.1)).eval()
     torch.nn.init.normal_(vocoder.prior_in.weight, std=0.05)
     return vocoder
 
 
 class NeuralExportTest(unittest.TestCase):
     def test_neural_vocoder_rewrite_matches_vocoder(self):
-        model, vocoder = small_model(), small_vocoder()
-        wrapper = Exportable(model, vocoder=vocoder).eval()
-        frames = 37
-        wave = 0.1 * torch.randn(1, frames * model.config.hop, generator=torch.Generator().manual_seed(2))
-        f0 = 120 + 30 * torch.rand(1, frames, generator=torch.Generator().manual_seed(3))
-        voiced = (torch.arange(frames) % 9 < 6).float()[None]
-        with torch.no_grad():
-            reference = vocoder(VocosMel()(wave).transpose(1, 2), f0, voiced)
-            audio = wrapper._neural(wave, f0, voiced, torch.tensor(frames))
-        self.assertEqual(audio.shape, reference.shape)
-        self.assertLess(float((audio - reference).abs().max()), 1e-3 * float(reference.abs().max()))
+        for high_hz in (0.0, 2500.0):
+            model, vocoder = small_model(), small_vocoder(high_hz)
+            wrapper = Exportable(model, vocoder=vocoder).eval()
+            frames = 37
+            wave = 0.1 * torch.randn(1, frames * model.config.hop, generator=torch.Generator().manual_seed(2))
+            f0 = 120 + 30 * torch.rand(1, frames, generator=torch.Generator().manual_seed(3))
+            voiced = (torch.arange(frames) % 9 < 6).float()[None]
+            with torch.no_grad():
+                reference = vocoder(VocosMel()(wave).transpose(1, 2), f0, voiced)
+                audio = wrapper._neural(wave, f0, voiced, torch.tensor(frames))
+            self.assertEqual(audio.shape, reference.shape)
+            self.assertLess(float((audio - reference).abs().max()), 1e-3 * float(reference.abs().max()))
 
     def test_onnx_with_vocoder_and_emotion_matches_pytorch(self):
         try:

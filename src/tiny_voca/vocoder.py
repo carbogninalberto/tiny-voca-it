@@ -35,13 +35,17 @@ class VocoderConfig:
     layers: int = 8
     prior: bool = False
     prior_noise: float = 0.03
+    # Pulse share of the prior above prior_high_hz, fading in over one octave (0 Hz = off).
+    # Real speech is less pulse-locked at high frequencies than the pulse train.
+    prior_high_hz: float = 0.0
+    prior_high_gain: float = 1.0
 
     def to_dict(self):
         return asdict(self)
 
     @classmethod
     def from_dict(cls, value):
-        return cls(**{"prior": False, "prior_noise": 0.03, **value})
+        return cls(**{"prior": False, "prior_noise": 0.03, "prior_high_hz": 0.0, "prior_high_gain": 1.0, **value})
 
 
 class ConvNeXtBlock(nn.Module):
@@ -59,6 +63,16 @@ class ConvNeXtBlock(nn.Module):
         return x + y.transpose(1, 2)
 
 
+def pulse_weight(c):
+    """[bins] weight of the pulse train in the prior: 1 below ``prior_high_hz``, then a
+    linear fade (in log frequency) to ``prior_high_gain`` at twice that frequency."""
+    frequencies = torch.linspace(0, c.sample_rate / 2, c.fft // 2 + 1)
+    if c.prior_high_hz <= 0:
+        return torch.ones_like(frequencies)
+    position = (torch.log2(frequencies.clamp_min(1.0) / c.prior_high_hz)).clamp(0, 1)
+    return 1 + (c.prior_high_gain - 1) * position
+
+
 class Vocoder(nn.Module):
     def __init__(self, config=VocoderConfig()):
         super().__init__()
@@ -73,6 +87,7 @@ class Vocoder(nn.Module):
             nn.init.normal_(self.prior_in.weight, std=0.01)
             nn.init.zeros_(self.prior_in.bias)
         self.register_buffer("window", torch.hann_window(c.fft), persistent=False)
+        self.register_buffer("pulse_weight", pulse_weight(c), persistent=False)
 
     def analyse_prior(self, f0, voiced, noise=None):
         """Pitch [B, frames] in Hz and voicing in [0, 1] -> complex STFT [B, bins, frames + 1]
@@ -84,8 +99,11 @@ class Vocoder(nn.Module):
         gate = F.interpolate(voiced.float()[:, None], size=samples, mode="linear", align_corners=False)[:, 0]
         if noise is None:
             noise = torch.randn(f0.shape[0], samples, device=f0.device)
-        source = pulses * gate + c.prior_noise * noise
-        return torch.stft(source, c.fft, c.hop, window=self.window, center=True, return_complex=True)
+        if c.prior_high_hz <= 0:
+            source = pulses * gate + c.prior_noise * noise
+            return torch.stft(source, c.fft, c.hop, window=self.window, center=True, return_complex=True)
+        stft = lambda x: torch.stft(x, c.fft, c.hop, window=self.window, center=True, return_complex=True)
+        return stft(pulses * gate) * self.pulse_weight[:, None] + stft(c.prior_noise * noise)
 
     def spectrum(self, mel, prior=None):
         """mel [B, bands, frames] -> (log magnitude, phase or phase correction), each [B, bins, frames]."""

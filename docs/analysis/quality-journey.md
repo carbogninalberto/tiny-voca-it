@@ -635,3 +635,40 @@ voices) or stronger regularisation.
   "venti", "12,50 euro" → "dodici euro e cinquanta", "email" → "imeil".
 - **Discrete pitch with sampling,** if the remaining flatness bothers the user.
 - **Commit the work.** Nothing is committed yet.
+
+### 6.4 Round 4 (18 November, from about 10:05)
+
+**Voice model:**
+
+- Adversarial 113k → 128k with the new **mel critic**
+  (`losses.MelDiscriminator`, 41k parameters, training only). It judges the Vocos
+  log-mel above 1 kHz, which is what the vocoder reads and where the model
+  over-smooths.
+- The adversarial share is raised to 1.0 (from 0.7). No pulse gate.
+- Run `runs/voice-mel-critic`, script `scripts/training/voice-mel-critic.sh`.
+
+**Vocoder:** pulse share of the prior weakened at high frequencies
+(`VocoderConfig.prior_high_hz` / `prior_high_gain`, no extra parameters, exported
+to ONNX).
+
+- **Sweep without retraining** (vocoder 180k, real spectrograms, 30 test clips; pulse
+  locking per band 1–2 / 2–4 / 4–6 kHz; real speech 0.55 / 0.48 / 0.41):
+
+  | Setting | Pulse locking | Mel error > 1 kHz |
+  |---|---|---|
+  | Off | 0.68 / 0.64 / 0.63 | 0.150 |
+  | 2.5 kHz, gain 0.3 | 0.71 / 0.63 / 0.60 | 0.183 |
+  | 2.5 kHz, gain 0.1 | 0.72 / 0.62 / 0.54 | 0.230 |
+  | 2 kHz, gain 0.03 | 0.73 / 0.56 / 0.29 | 0.259 |
+
+  The setting controls high-band locking as intended. The mel error rises until the
+  network adapts.
+- **Fine-tune:** 180k → 195k at 2.5 kHz / gain 0.05 (`runs/vocoder-highband`),
+  queued after the voice run.
+
+**Success criteria** (objective, on the model's own speech):
+
+- fine detail above 1 kHz towards 1.0 (now 0.78);
+- pulse locking at 4–6 kHz towards 0.41 (now 0.45);
+- mel error not worse;
+- then blind listening.

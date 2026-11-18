@@ -214,8 +214,15 @@ class Exportable(nn.Module):
         if vc.prior:
             samples = wave.shape[1]
             gate = F.interpolate(voiced[:, None], size=samples, mode="linear", align_corners=False)[:, 0]
-            source = self._pulses(f0.clamp(40, 1000), limit=0.47) * gate + vc.prior_noise * torch.randn_like(wave)
-            prior_real, prior_imaginary = self._stft(source)
+            pulses = self._pulses(f0.clamp(40, 1000), limit=0.47) * gate
+            noise = vc.prior_noise * torch.randn_like(wave)
+            if vc.prior_high_hz > 0:
+                pulse_real, pulse_imaginary = self._stft(pulses)
+                noise_real, noise_imaginary = self._stft(noise)
+                weight = v.pulse_weight[None, :, None]
+                prior_real, prior_imaginary = pulse_real * weight + noise_real, pulse_imaginary * weight + noise_imaginary
+            else:
+                prior_real, prior_imaginary = self._stft(pulses + noise)
             prior_magnitude = torch.sqrt(prior_real * prior_real + prior_imaginary * prior_imaginary)
             log_prior = torch.log(prior_magnitude + 1e-5)
         log_magnitude, phase = v.spectrum_from_log_prior(mel, log_prior)
