@@ -778,3 +778,12 @@ From now on decisions are made and recorded here, without waiting for approval.
   clips: real / model / model + real-statistics texture above 2 kHz / model
   unsharp-masked above 1 kHz. Blind files sent; if texture helps, the next voice
   round changes the loss above 2 kHz.
+- **EF3 data result (14:47):**
+  - 6.03 h passed screening (3610 clips, Whisper WER ≤ 0.2).
+  - The training gates kept 2336 clips: 2224 train, 98 validation and 14 test, or
+    3.62 h of train audio. WER above 0.1 dropped 1118 clips; the speaking-rate
+    gate dropped another 156.
+  - Decision: keep the strict 0.1 gate. Clean data is worth more than quantity for
+    a fine-tune that starts from an existing model, and 3.6 h is ~45% of IT1's
+    training audio. If EF3 comes out mispronouncing words or unstable, generate
+    more rather than loosen the gate.
