@@ -14,20 +14,22 @@ governor(){ .venv/bin/python scripts/gpu_governor.py --file $1 --max-util 85 --t
 until [ -f $LIB/mel-critic-key.json ]; do sleep 60; done
 if ! grep -q '"complete": true' logs/ef3-gen.log 2>/dev/null; then
   log "EF3 generation: start"
-# (disabled: prepare --resume refuses a growing input)                                       
-#                                                                      
-#              
-#                                       
-#                                                                                                                                                  
-#                                                                                                                                               
-#         
-#           
-  # Batch 16 when the GPU is free (faster); on any failure (e.g. out of memory) resume at batch 8.
-  for B in 16 8; do
-    PYTHONPATH=$LIB/qwenlib .venv/bin/python scripts/generate_voice.py --root data/ef3-synth --voice-id EF3 \
-      --reference data/emotion-synth/audio/emo-EF3-neutral-0.0-3e06518d08.wav --hours 6 --batch $B >> logs/ef3-gen.log 2>&1 && break
-    log "EF3 generation failed at batch $B"
+  # The generator is bound by one CPU core (autoregressive Python loop; GPU ~15% busy), so N processes
+  # run in parallel on separate sentences, each with a GPU-memory cap; each stops at HOURS/N of new audio.
+  # Fallback on failure (e.g. out of GPU memory): fewer processes. A final single pass writes the splits.
+  for N in 2 1; do
+    for k in $(seq 0 $((N - 1))); do
+      PYTHONPATH=$LIB/qwenlib .venv/bin/python scripts/generate_voice.py --root data/ef3-synth --voice-id EF3 \
+        --reference data/emotion-synth/audio/emo-EF3-neutral-0.0-3e06518d08.wav --hours $(python3 -c "print(round(3 / $N, 2))") --batch 8 \
+        --shard $k/$N --memory-fraction $(python3 -c "print(round(0.92 / $N, 2))") >> logs/ef3-gen-$k.log 2>&1 &
+    done
+    wait
+    ok=1; for k in $(seq 0 $((N - 1))); do grep -q '"complete": true' logs/ef3-gen-$k.log || ok=0; done
+    [ $ok = 1 ] && break
+    log "EF3 generation with $N processes failed; retrying with fewer"
   done
+  PYTHONPATH=$LIB/qwenlib .venv/bin/python scripts/generate_voice.py --root data/ef3-synth --voice-id EF3 \
+    --reference data/emotion-synth/audio/emo-EF3-neutral-0.0-3e06518d08.wav --hours 0 >> logs/ef3-gen.log 2>&1
   grep -q '"complete": true' logs/ef3-gen.log || { log "EF3 generation failed"; exit 1; }
 fi
 log "EF3 generation done: $(grep -o '"accepted_hours": [0-9.]*' logs/ef3-gen.log | tail -1)"

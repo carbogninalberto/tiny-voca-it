@@ -58,6 +58,8 @@ def main():
     parser.add_argument("--max-wer", type=float, default=0.2)
     parser.add_argument("--batch", type=int, default=8)
     parser.add_argument("--seed", type=int, default=20261118)
+    parser.add_argument("--shard", default="0/1", help="k/n: this process takes every n-th sentence from k (run n processes in parallel)")
+    parser.add_argument("--memory-fraction", type=float, default=0.0, help="Cap this process's share of GPU memory (0 = no cap)")
     args = parser.parse_args()
     (args.root / "audio").mkdir(parents=True, exist_ok=True)
     reference_text = next(json.loads(l)["text"] for l in args.reference_manifest.read_text().splitlines()
@@ -84,7 +86,14 @@ def main():
     exclude.add(reference_text)
     texts = script_pool(args.texts, 10 ** 6, args.seed, exclude)
     jobs = [(f"{args.voice_id.lower()}-{hashlib.sha256(t.encode()).hexdigest()[:12]}", t) for t in texts]
-    jobs = [j for j in jobs if j[0] not in seen]
+    k, n = (int(x) for x in args.shard.split("/"))
+    jobs = [j for j in jobs[k::n] if j[0] not in seen]
+    # A batch runs until its longest clip ends, so batch sentences of similar length (sorted within
+    # windows of 20 batches, keeping the overall order random).
+    window = 20 * args.batch
+    jobs = [j for start in range(0, len(jobs), window) for j in sorted(jobs[start:start + window], key=lambda j: len(j[1]))]
+    if args.memory_fraction > 0:
+        torch.cuda.set_per_process_memory_fraction(args.memory_fraction)
     base = Qwen3TTSModel.from_pretrained(BASE, device_map="cuda:0", dtype=torch.bfloat16, attn_implementation="sdpa")
     prompt = base.create_voice_clone_prompt(ref_audio=str(args.reference), ref_text=reference_text)
     start, target = time.time(), args.hours * 3600
@@ -95,9 +104,13 @@ def main():
             break
         batch = jobs[i:i + args.batch]
         for attempt in range(2):
-            torch.manual_seed(args.seed + 100 * attempt + i)
+            torch.manual_seed(args.seed + 100 * attempt + i + 1_000_003 * k)
+            # Cap the length: 12 codec frames per second, Italian read at about 13 characters per second;
+            # 2x margin plus 3 s. Without it one runaway clip holds the batch for up to 2048 frames (170 s).
+            limit = int(12 * (2 * max(len(t) for _, t in batch) / 13 + 3))
             waves, rate = base.generate_voice_clone(text=[t for _, t in batch], language=["Italian"] * len(batch),
-                                                    voice_clone_prompt=prompt * len(batch) if isinstance(prompt, list) else prompt)
+                                                    voice_clone_prompt=prompt * len(batch) if isinstance(prompt, list) else prompt,
+                                                    max_new_tokens=limit)
             retry = []
             for (clip, text), wave in zip(batch, waves):
                 score = error(text, wave, rate)
@@ -117,7 +130,6 @@ def main():
             if not batch:
                 break
         if (i // args.batch) % 25 == 0:
-            write_splits(args.root)   # lets a CPU job prepare features while generation continues
             print(json.dumps({"accepted_hours": round(accepted / 3600, 3), "minutes": round((time.time() - start) / 60, 1)}), flush=True)
     print(json.dumps({"complete": True, "clips": write_splits(args.root), "accepted_hours": round(accepted / 3600, 3)}), flush=True)
 
