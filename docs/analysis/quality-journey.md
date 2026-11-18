@@ -898,3 +898,15 @@ From now on decisions are made and recorded here, without waiting for approval.
     89 tests.
   - File: `runs/vocoder-two/vocoder-voicegain.pt`, live on Pages (`7542565`)
     and the default in the playground.
+- **Playback level and two-voice product (22:30):**
+  - Why my samples sounded better than the playground: the local playground
+    peak-normalised to 0.8, about 3 dB louder than the −20 LUFS samples, and
+    louder playback makes the metallic trace more audible. It also applied the
+    "neutral" emotion at 0.7 by default.
+  - Fix: every path now plays at the same level (RMS 0.1, about −20 LUFS, peaks
+    ≤ 0.95). That covers CLI samples, the local playground and Pages. The emotion
+    intensity defaults to 0.
+  - Product voices: only **IT1** and **EF3** are offered (the user's choice).
+    The model keeps its 12 speaker rows, a negligible cost; Pages lists only the
+    preview model, with `voices` = IT1, EF3. The playground uses `--voices IT1
+    EF3`. Pages `1aaee9c`.

@@ -107,13 +107,11 @@
   <section class="about">
     <h2>About the voices</h2>
     <ul>
-      <li><b>Preview</b>: the work in progress on branch <code>neural-vocoder-emotion</code>. A 4.5M-parameter voice model
-        trained on 12 Italian voices plus emotional speech, with a 2.2M-parameter neural vocoder that turns its spectrogram
-        into audio (6.8M parameters in total, all running in your browser). Choose the reader under <i>Speaker</i>; the
-        emotion input is experimental and works best on the EF/EM voices.</li>
-      <li><b>IT1</b>: the Italian base model, trained for 100k steps on 11.4 hours of one CML-TTS reader.
-        On held-out test sentences Whisper transcribes it with 7.1% word errors (the original recordings: 9.1%).</li>
-      <li><b>IT2</b>: the same model adapted to a different reader with only 28 minutes of audio, the custom-voice fine-tuning demo.</li>
+      <li><b>IT1</b> (male): a CML-TTS reader of Italian audiobooks (LibriVox recordings).</li>
+      <li><b>EF3</b> (female): a synthetic voice, 6 hours generated with Qwen3-TTS and screened with Whisper.</li>
+      <li>One 4.5M-parameter voice model and a 2.2M-parameter neural vocoder (6.8M parameters in total), all running in
+        your browser. The emotion input is experimental. Work in progress on branch <code>neural-vocoder-emotion</code>;
+        the timestamp in the model name is the last update.</li>
     </ul>
     <h2>Known limits</h2>
     <ul>
@@ -191,8 +189,10 @@ function speak() {
 }
 
 function wav(samples, rate) {
+  // Same playback level as the samples and the local playground: RMS 0.1 (about -20 LUFS), peaks at most 0.95.
   const peak = samples.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
-  const gain = peak > 0.99 ? 0.99 / peak : 1;
+  const rms = Math.sqrt(samples.reduce((m, v) => m + v * v, 0) / Math.max(1, samples.length));
+  const gain = Math.min(0.1 / Math.max(rms, 1e-6), 0.95 / Math.max(peak, 1e-6));
   const buffer = new ArrayBuffer(44 + samples.length * 2), view = new DataView(buffer);
   const text = (offset, s) => [...s].forEach((c, i) => view.setUint8(offset + i, c.charCodeAt(0)));
   text(0, "RIFF"); view.setUint32(4, 36 + samples.length * 2, true); text(8, "WAVEfmt ");
@@ -227,10 +227,12 @@ worker.onmessage = ({ data }) => {
     ready = true; $("speak").disabled = false;
     setStatus(`Ready · ${selected().label} · voice ${Math.round(data.step / 1000)}k steps` + (data.vocoderStep ? ` · vocoder ${Math.round(data.vocoderStep / 1000)}k` : ""));
     const keep = $("speaker").selectedOptions[0]?.textContent;
-    $("speaker").replaceChildren(...data.voices.map((v, i) => new Option(v, i)));
-    const preferred = data.voices.indexOf(keep) >= 0 ? keep : (selected().voice || data.voices[0]);
+    // A model entry may list the voices to offer (the model itself keeps all its speaker rows).
+    const offered = data.voices.map((v, i) => [v, i]).filter(([v]) => !selected().voices || selected().voices.includes(v));
+    $("speaker").replaceChildren(...offered.map(([v, i]) => new Option(v, i)));
+    const preferred = offered.some(([v]) => v === keep) ? keep : (selected().voice || offered[0][0]);
     $("speaker").value = String(Math.max(0, data.voices.indexOf(preferred)));
-    $("speaker-box").hidden = data.voices.length < 2;
+    $("speaker-box").hidden = offered.length < 2;
     $("emotion").replaceChildren(...data.emotions.map((e, i) => new Option(e, i)));
     $("emotion-box").hidden = $("intensity-box").hidden = !data.emotions.length;
   }

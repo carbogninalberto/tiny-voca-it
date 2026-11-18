@@ -58,7 +58,7 @@ button{font:inherit;padding:9px 18px;border-radius:8px;border:0;background:var(-
 <label>Intonazione <span id="rangev">1.00</span><input id="range" type="range" min="0.6" max="1.8" step="0.05" value="1"></label>
 <label id="corrbox" style="display:none;flex-direction:row;align-items:center;gap:6px"><input id="corr" type="checkbox"> Correzione mel <span id="corrv"></span></label>
 <label id="emobox" style="display:none">Emozione<select id="emotion"></select></label>
-<label id="intbox" style="display:none">Intensità <span id="intv">0.70</span><input id="intensity" type="range" min="0" max="1" step="0.05" value="0.7"></label>
+<label id="intbox" style="display:none">Intensità <span id="intv">0.00</span><input id="intensity" type="range" min="0" max="1" step="0.05" value="0"></label>
 <button id="go">Parla</button></div></div>
 <div class="card" id="takes"><div class="muted">Le prove appaiono qui, la più recente in alto.</div></div>
 </main><script>
@@ -102,7 +102,8 @@ info();setInterval(info,60000);
 
 
 class Engine:
-    def __init__(self, model_paths, vocoder_path, threads):
+    def __init__(self, model_paths, vocoder_path, threads, voices=None):
+        self.voices = list(voices or [])
         torch.set_num_threads(threads)
         self.model_paths = [Path(p) for p in model_paths]   # first existing one wins; re-read when it changes
         self.model, self.model_key, self.model_step = None, None, None
@@ -163,7 +164,7 @@ class Engine:
         if self.vocos is not None:
             vocoders.append({"id": "vocos", "label": "Vocos (reference)"})
         return {"model": f"{self.model_key[0]} (step {self.model_step})", "model_step": self.model_step,
-                "model_name": Path(self.model_key[0]).parent.name, "emotions": list(model.config.emotions), "voices": list(model.config.speakers), "vocoders": vocoders,
+                "model_name": Path(self.model_key[0]).parent.name, "emotions": list(model.config.emotions), "voices": [v for v in model.config.speakers if not self.voices or v in self.voices], "vocoders": vocoders,
                 "vocoder_step": self.vocoder_step,
                 "vocoder_updated": time.strftime("%H:%M", time.localtime(self.vocoder_mtime[1])) if self.vocoder_mtime else None,
                 "vocoder_name": getattr(self, "vocoder_name", None),
@@ -205,7 +206,9 @@ class Engine:
             if correction and vocoder in ("ours", "vocos") and self.current_correction() is not None:
                 emotional += f", mel correction {self.correction_step}"
             detail = f"voice {self.model_step / 1000:g}k, " + detail + emotional + f", intonation {pitch_range:.2f}, {len(audio) / 24000:.1f}s audio in {seconds:.2f}s"
-            audio = audio / max(1e-6, float(np.abs(audio).max())) * 0.8
+            # Same playback level everywhere (CLI samples, Pages): RMS 0.1 (about -20 LUFS for speech with pauses),
+            # peaks capped at 0.95. Loudness changes how metallic the voice sounds, so it must not vary.
+            audio = audio * min(0.1 / max(1e-6, float(np.sqrt(np.mean(audio ** 2)))), 0.95 / max(1e-6, float(np.abs(audio).max())))
             buffer = io.BytesIO()
             sf.write(buffer, audio.astype(np.float32), 24000, format="WAV", subtype="PCM_16")
             return buffer.getvalue(), detail
@@ -267,9 +270,10 @@ def main():
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8790)
     parser.add_argument("--threads", type=int, default=2)
+    parser.add_argument("--voices", nargs="*", help="Voices to offer (default: all voices of the model)")
     args = parser.parse_args()
     os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
-    engine = Engine(args.model, args.vocoder, args.threads)
+    engine = Engine(args.model, args.vocoder, args.threads, args.voices)
     print(json.dumps({"listening": f"http://{args.host}:{args.port}", **engine.info()}), flush=True)
     ThreadingHTTPServer((args.host, args.port), handler_for(engine)).serve_forever()
 
