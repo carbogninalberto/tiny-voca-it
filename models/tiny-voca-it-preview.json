@@ -111,7 +111,7 @@
   "surprise",
   "disgust"
  ],
- "vocoder_step": 180000,
+ "vocoder_step": 150000,
  "language": "it",
  "locale": "it-IT",
  "profile_version": 1,
