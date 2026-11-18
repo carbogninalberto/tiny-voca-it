@@ -860,3 +860,27 @@ From now on decisions are made and recorded here, without waiting for approval.
     playground and on Pages (`a61b882`).
   - Lesson: for the metallic trace, pulse locking and fine detail are better
     predictors of preference than mel error.
+- **Round 6 diagnosis (20:40): the remaining IT1 lock is in the vocoder.**
+  - This corrects the earlier note. With vocoder-two, IT1 locks the same on real
+    and on model spectrograms (0.45 / 0.45; real speech 0.31), so the voice model
+    is not adding to it.
+  - Inference-only sweep of the high-band pulse share (`prior_high_gain`, trained
+    at 0.05) and its start frequency. Columns are model-spectrogram mel error /
+    pulse locking at 4–6 kHz:
+
+    | gain, from | IT1 | EF3 |
+    |---|---|---|
+    | 0.05, 2.5 kHz (trained) | 0.662 / 0.45 | 0.601 / 0.50 |
+    | 0.02, 2.5 kHz | 0.663 / 0.42 | 0.603 / 0.42 |
+    | 0.0, 2.5 kHz | 0.665 / 0.38 | 0.605 / 0.35 |
+    | 0.05, 1.5 kHz | 0.675 / 0.36 | 0.614 / 0.42 |
+    | 0.0, 1.5 kHz | 0.677 / 0.12 | 0.612 / 0.17 |
+
+  - Locking follows the gain almost linearly, at almost no cost in mel error at
+    2.5 kHz. Below 2.5 kHz the error rises (outside what the vocoder was trained
+    on).
+  - Decision: the gain becomes a per-voice setting chosen blind (G files, key
+    `gain-key.json`). If the best gain differs per voice, store it per voice in
+    the model metadata. If the gain is far from 0.05, fine-tune the vocoder with
+    the gain randomised in [0, 0.1] so every setting is in distribution. This
+    replaces the planned voice-loss round for now.
