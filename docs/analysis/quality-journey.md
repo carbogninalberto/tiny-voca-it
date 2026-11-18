@@ -851,3 +851,12 @@ From now on decisions are made and recorded here, without waiting for approval.
   - Decision: no objective winner on both voices, so the blind test (W files,
     key `vocoder-two-key.json`) decides. Until then the preview keeps the 180k
     vocoder; the playground offers both.
+- **Vocoder-two blind test (20:15):**
+  - Result: the listener preferred **vocoder-two 200k** on both voices (IT1-W2,
+    EF3-W1).
+  - The ear follows the locking and detail numbers, not the 3–4% higher mel
+    error.
+  - Decision: the current product is voice-two 115k + vocoder-two 200k, in the
+    playground and on Pages (`a61b882`).
+  - Lesson: for the metallic trace, pulse locking and fine detail are better
+    predictors of preference than mel error.
