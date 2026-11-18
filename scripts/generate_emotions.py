@@ -42,6 +42,9 @@ VOICES = {   # id: description (Italian native speakers, clean close-microphone 
     "EM2": "A young man in his twenties with a light tenor voice, native Italian speaker from Rome, relaxed delivery, close microphone, quiet room.",
     "EF3": "A woman in her fifties with a low, slightly husky voice, native Italian speaker from Milan, close microphone, quiet room.",
     "EM3": "A man in his sixties with a resonant baritone voice, native Italian speaker from Florence, close microphone, quiet room.",
+    # Product voices chosen 2026-11-19 (designs M4 and F3); their neutral data are clones of data/voice-refs/.
+    "EM4": "A man in his thirties with a soft, gentle, medium-low voice, native Italian speaker from Tuscany, reassuring and kind, clear diction, close microphone, quiet room.",
+    "EF4": "A woman in her forties with a low, smooth, assured voice, native Italian speaker from Milan, a news anchor, clear diction, close microphone, quiet room.",
 }
 EMOTIONS = {  # label: (slightly, very) style clauses
     "neutral": ("Speaking in a calm, neutral, matter-of-fact tone.",) * 2,

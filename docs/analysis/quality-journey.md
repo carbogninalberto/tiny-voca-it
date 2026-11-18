@@ -973,3 +973,28 @@ From now on decisions are made and recorded here, without waiting for approval.
     in a separate, bigger model (about 8–10M) with its own voice-fingerprint
     network.
   - Pages `0cac58a`.
+
+### 6.9 Round 8: new product voices and stronger emotions (19 November, 00:45)
+
+- **Voices:** the user chose two of ten VoiceDesign proposals. Designs are in
+  `data/voice-refs/designs-20261119.json`.
+  - **EM4** (design M4): a man in his thirties with a soft, gentle, medium-low
+    voice, Tuscany; median F0 97 Hz.
+  - **EF4** (design F3): a woman in her forties with a low, smooth news-anchor
+    voice, Milan; median F0 215 Hz.
+  - They replace IT1 and EF3 as product voices. IT1 is a real reader with no
+    emotional recordings, so it cannot carry the emotion control.
+- **Neutral data:** 5 h screened per voice, Base clones of each voice's neutral
+  reference. Splits are leakage-safe across all voices (new `--split-train` /
+  `--split-validation` flags).
+- **Emotions were too weak; the cause is data.** Only 30 texts per emotion, so
+  about 25 for training, and about 35 min per voice.
+  - New texts: about 120 per emotion (`data/emotion-texts-v2.json`), written to
+    be emotion-congruent.
+  - New audio: about 100 clips per voice × emotion × intensity.
+  - A WavLM speaker-verification filter against the reference removes clips
+    whose VoiceDesign timbre drifted.
+  - Emotion data is oversampled in training. An emotion classifier plus
+    per-emotion pitch, energy and rate statistics will judge it.
+- **Folded in:** the paused round 7 (pitch-change loss, weight 10) becomes part of
+  this voice fine-tune.

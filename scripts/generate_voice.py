@@ -86,6 +86,10 @@ def main():
     parser.add_argument("--whisper-device", choices=("cpu", "cuda"), default="cuda",
                         help="Where the screening runs; either way it overlaps with the next batch in a worker thread")
     parser.add_argument("--whisper-threads", type=int, default=8)
+    parser.add_argument("--split-train", nargs="*", default=["data/it-multi6-annotations/train.jsonl", "data/emotion-annotations/train.jsonl"],
+                        help="Manifests whose texts are training texts of other voices (kept in this voice's train split)")
+    parser.add_argument("--split-validation", nargs="*", default=["data/it-multi6-annotations/validation.jsonl", "data/emotion-annotations/validation.jsonl"],
+                        help="Manifests whose texts are validation/test texts of other voices (routed to this voice's validation split)")
     args = parser.parse_args()
     (args.root / "audio").mkdir(parents=True, exist_ok=True)
     reference_text = next(json.loads(l)["text"] for l in args.reference_manifest.read_text().splitlines()
@@ -177,7 +181,7 @@ def main():
                                   "batches": number}), flush=True)
         if pending is not None:
             pending.result()
-    print(json.dumps({"complete": True, "clips": write_splits(args.root), "accepted_hours": round(state["accepted"] / 3600, 3)}), flush=True)
+    print(json.dumps({"complete": True, "clips": write_splits(args.root, args.split_train, args.split_validation), "accepted_hours": round(state["accepted"] / 3600, 3)}), flush=True)
 
 
 if __name__ == "__main__":
