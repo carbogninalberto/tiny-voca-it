@@ -1036,3 +1036,20 @@ From now on decisions are made and recorded here, without waiting for approval.
   - Neither CPU generation (about 0.1× real time) nor a second GPU process
     (measured earlier: time-slicing, no gain) helps. Instead, idle cores run
     each voice's features and alignment while the GPU generates the next voice.
+- **CUDA graphs adopted (01:55):**
+  - The earlier failure was a lifetime bug: the cache-position tensors read by
+    the graph were freed after capture and their memory reused. Fixed by keeping
+    them on the graph object. In greedy mode, graph and eager output are
+    identical.
+  - Controlled test: 72 EM4 sentences, production memory cap 0.8 and expandable
+    segments.
+
+    | | real-time factor | mean WER | clips with WER > 0.2 | peak memory |
+    |---|---|---|---|---|
+    | fast loop | 5.01× | 0.097 | 10 | 11.8 GB |
+    | CUDA graphs | **12.15×** | 0.091 | 4 | 11.8 GB |
+
+  - Production now runs at about 50 accepted clips per minute (21 before).
+  - Lesson: test speedups with the production settings (memory cap,
+    allocator). The first uncapped test spilled into shared memory and looked
+    like a hang.

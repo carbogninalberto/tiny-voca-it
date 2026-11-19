@@ -63,7 +63,8 @@ class _Graphed:
         from transformers.cache_utils import StaticCache
         self.input = torch.zeros(batch, 2, width, device=device, dtype=dtype)
         self.cache = StaticCache(config=predictor.config, max_cache_len=steps + 2)
-        positions = [torch.arange(0, 2, device=device)] + [torch.tensor([2 + i], device=device) for i in range(steps - 1)]
+        # Kept on self: the graph reads these buffers on every replay (freed buffers get reused).
+        self.positions = positions = [torch.arange(0, 2, device=device)] + [torch.tensor([2 + i], device=device) for i in range(steps - 1)]
 
         def loop():
             out = predictor(inputs_embeds=self.input, past_key_values=self.cache, use_cache=True, cache_position=positions[0])

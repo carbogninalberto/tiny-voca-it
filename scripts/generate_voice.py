@@ -101,7 +101,7 @@ def main():
     import librosa
     from qwen_tts import Qwen3TTSModel
     import qwen_fast
-    qwen_fast.patch()   # lean sub-code loop: +20% throughput, same outputs
+    qwen_fast.patch_graphs()   # sub-code loop as a CUDA graph: ~2.4x throughput, same quality (decision log 6.9)
     from tiny_voca.evaluate import italian_normalizer as normalize
     # Generation is bound by one CPU core driving many small GPU kernels (the GPU is mostly idle), so the
     # Whisper screening runs in a worker thread, overlapped with the next batch. On the GPU it is fast

@@ -141,7 +141,7 @@ def main():
     from jiwer import wer
     from qwen_tts import Qwen3TTSModel
     import qwen_fast
-    qwen_fast.patch()   # lean sub-code loop: +20% throughput, same outputs
+    qwen_fast.patch_graphs()   # sub-code loop as a CUDA graph: ~2.4x throughput, same quality (decision log 6.9)
     from tiny_voca.evaluate import italian_normalizer
     normalize = italian_normalizer
     whisper = WhisperModel("small", device="cuda", compute_type="float16")
@@ -225,7 +225,7 @@ def design_main(args, voices, per_combination):
     from jiwer import wer
     from qwen_tts import Qwen3TTSModel
     import qwen_fast
-    qwen_fast.patch()   # lean sub-code loop: +20% throughput, same outputs
+    qwen_fast.patch_graphs()   # sub-code loop as a CUDA graph: ~2.4x throughput, same quality (decision log 6.9)
     import librosa
     from tiny_voca.evaluate import italian_normalizer as normalize
     whisper = WhisperModel("small", device="cuda", compute_type="float16")
