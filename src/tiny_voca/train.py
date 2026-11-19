@@ -534,6 +534,8 @@ def main():
                         help="embedding: only the voice rows; acoustic: voice rows + frame/prosody/acoustic/synthesis "
                         "(text encoder frozen); full: everything")
     parser.add_argument("--init-voice", help="Source voice whose rows initialise target voices that are new")
+    parser.add_argument("--new-voice-init", nargs="*", default=[], metavar="NEW=SOURCE",
+                        help="With --init-from: start an appended voice's speaker rows from an existing voice (e.g. EM4=EM1)")
     args = parser.parse_args()
     if min(args.steps, args.batch_frames, args.max_batch, args.save_every, args.keep_every, args.log_every, args.crops, args.gan_ramp) < 1:
         parser.error("steps, batch limits and intervals must be positive")
@@ -671,6 +673,16 @@ def main():
         step = state["step"]
         loaded = load_compatible(system, state["system"])
         loaded["config_changes"] = sorted(differences)
+        if args.new_voice_init:
+            # Appended voices start from a similar existing voice instead of a random row.
+            with torch.no_grad():
+                tables = dict(system.named_parameters())
+                for pair in args.new_voice_init:
+                    new, source = pair.split("=", 1)
+                    for name in SPEAKER_TABLES:
+                        if name in tables:
+                            tables[name][c.speakers.index(new)] = tables[name][c.speakers.index(source)]
+            loaded["new_voice_init"] = list(args.new_voice_init)
         # Critics that have already been trained are taken over, otherwise a branch
         # in the adversarial phase would hand full-strength gradients from untrained
         # critics to the generator. Optimizer moments are kept when no tensor changed.

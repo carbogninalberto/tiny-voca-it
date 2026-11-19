@@ -1063,3 +1063,11 @@ From now on decisions are made and recorded here, without waiting for approval.
   - The step sits outside the front-end identity, so checkpoints are unaffected.
   - Live on Pages for the current model. The benchmark's 11 digit lines (1.93%
     WER) will be re-measured with the round-8 model.
+- **Round-8 fixes (02:50):**
+  - CPU prep rejected every EM4 clip as an unknown speaker. Fix:
+    `configs/italian-voice-round-8.json`, the emotion config with EM4 and EF4
+    appended. Branching supports appended voices; existing rows keep their
+    positions.
+  - New training option `--new-voice-init EM4=EM1 EF4=EF3`: appended voices
+    start from the speaker rows of a similar existing voice rather than random
+    rows.

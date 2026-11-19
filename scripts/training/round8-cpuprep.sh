@@ -8,10 +8,10 @@ prep(){ local set=$1
   for s in validation test train; do
     [ -s data/$set-synth/$s.jsonl ] || continue
     nice -n 10 .venv/bin/python -m tiny_voca.prepare --inputs data/$set-synth/$s.jsonl --split $s --output data/$set-features \
-      --config configs/italian-voice-emotion.json --workers 8 --resume
+      --config configs/italian-voice-round-8.json --workers 8 --resume
   done
   nice -n 10 .venv/bin/python -m tiny_voca.annotate --features data/$set-features --output data/$set-annotations \
-    --dataset-revision qwen3-$set-20261119 --config configs/italian-voice-emotion.json --device cpu --resume
+    --dataset-revision qwen3-$set-20261119 --config configs/italian-voice-round-8.json --device cpu --resume
 }
 for V in EM4 EF4; do
   set=$(echo $V | tr A-Z a-z)

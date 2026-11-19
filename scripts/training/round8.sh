@@ -54,10 +54,10 @@ if ! grep -q 'ROUND8-PREP-DONE' logs/round8-prep.log 2>/dev/null; then
       for s in validation test train; do
         [ -s data/$set-synth/$s.jsonl ] || continue
         .venv/bin/python -m tiny_voca.prepare --inputs data/$set-synth/$s.jsonl --split $s --output data/$set-features \
-          --config configs/italian-voice-emotion.json --workers 10 --resume
+          --config configs/italian-voice-round-8.json --workers 10 --resume
       done
       .venv/bin/python -m tiny_voca.annotate --features data/$set-features --output data/$set-annotations \
-        --dataset-revision qwen3-$set-20261119 --config configs/italian-voice-emotion.json --device cuda --resume
+        --dataset-revision qwen3-$set-20261119 --config configs/italian-voice-round-8.json --device cuda --resume
     done
     # Emotion clips three times per epoch (oversampling: they are a small share of the hours).
     for k in 1 2 3; do cat data/emotion4-annotations/train.jsonl; done > data/emotion4-annotations/train-x3.jsonl
@@ -74,9 +74,9 @@ if ! grep -q 'voice-four done' logs/round8.log; then
     --train data/em4-annotations/train.jsonl data/ef4-annotations/train.jsonl data/emotion4-annotations/train-x3.jsonl \
             data/it-multi6-annotations/train-it1.jsonl data/emotion-annotations/train-no-ef3-neutral.jsonl \
     --validation data/em4-annotations/validation.jsonl data/ef4-annotations/validation.jsonl data/emotion4-annotations/validation.jsonl \
-    --validation-size 96 --output runs/voice-four --config configs/italian-voice-emotion.json --steps 135000 --batch-frames 9000 --max-batch 32 \
+    --validation-size 96 --output runs/voice-four --config configs/italian-voice-round-8.json --steps 135000 --batch-frames 9000 --max-batch 32 \
     --learning-rate 1e-4 --warmup 300 --gan-start 0 --gan-ramp 1000 --gan-ratio 0.7 --teacher-hold 0 --teacher-ramp 1 --teacher-final 0 \
-    --weights '{"pitch_spread": 4.0}' --pitch-delta 10 --lr-schedule cosine --ema-decay 0.999 --stream \
+    --weights '{"pitch_spread": 4.0}' --pitch-delta 10 --new-voice-init EM4=EM1 EF4=EF3 --lr-schedule cosine --ema-decay 0.999 --stream \
     --throttle-file logs/voice-four.throttle.json --save-every 1000 --keep-every 1000 --max-seconds 172800 >> logs/voice-four.log 2>&1
   kill $G 2>/dev/null
   [ -f runs/voice-four/inference.pt ] || { log "voice-four failed"; exit 1; }
