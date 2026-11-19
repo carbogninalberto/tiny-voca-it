@@ -1227,3 +1227,10 @@ From now on decisions are made and recorded here, without waiting for approval.
   cloning; every 12th clip of the others goes to validation.
 - **Aim:** measure whether a small voice-fingerprint network can clone unseen
   voices. Target speaker similarity ≥ 0.45 before scaling up.
+- **Texture blind test (14:15):**
+  - The listener preferred the texture model on both voices (Lorenzo-T1,
+    Chiara-T1).
+  - Adopted `runs/voice-six/inference-139000.pt`. Pages (all four precisions)
+    and the playground use it.
+  - The benchmark is re-run on the CPU, because the GPU is busy with the
+    zero-shot pool.
