@@ -53,6 +53,33 @@ them exactly without retraining, and the page can let users add entries for thei
 3. Seed it with frequent problem words found by Whisper on the benchmark and on a list of common loanwords.
 4. In the browser: an optional "pronunciation" box (word = how it should sound) stored locally.
 
+## 3. Naturalness: where the UTMOS gap is (measured 19 November)
+
+UTMOS22-strong on 30 validation clips per voice (Lorenzo / Chiara):
+
+| | UTMOS |
+|---|---|
+| real clips (Qwen3-TTS training data) | 4.04 / 4.22 |
+| real 100-band log-mel → Vocos 13.5M | 3.75 / 3.74 |
+| real log-mel → our vocoder 2.2M | 3.47 / 3.56 |
+| full model, text → speech (0.3.0) | 3.42 / 3.27 |
+
+- The **mel representation itself** costs 0.3–0.5: even Vocos cannot recover the recording from it.
+- **Our vocoder vs Vocos** costs 0.2–0.3.
+- **The voice model** costs only about 0.05 (Lorenzo) and 0.3 (Chiara).
+
+**Ideas, in order of expected gain per effort**
+1. **A better vocoder at the same size:** longer training, stronger adversarial weight (the vocoder's GAN term
+   is averaged over 8 critics, about 8× weaker than Vocos's sum), feature matching on real clips. Target: close
+   most of the 0.2–0.3 to Vocos.
+2. **Bypass the mel bottleneck:** condition the vocoder on the voice model's acoustic features (192 per frame)
+   plus the pitch prior, and fine-tune the two jointly on waveform losses (VITS-style). This is the only route
+   past the ~3.75 ceiling of any mel vocoder. It loses the Vocos teacher on identical input, so distil first
+   and then fine-tune jointly.
+3. **A modestly larger vocoder** (2.2M → 3–4M) only if 1 plateaus.
+
+Judged on UTMOS, the copy-synthesis split above, WER and blind tests.
+
 ## Also noted from SmollerTTS
 
 - **Δmel loss** (L1 on frame-to-frame mel differences at all frequencies): related to our texture loss

@@ -1301,3 +1301,13 @@ From now on decisions are made and recorded here, without waiting for approval.
   - UTMOS is not biased against clean Italian. **The remaining gap to the
     targets (0.6–0.9) is the main quality headroom**; WER is already 0.50%.
   - UTMOS becomes a standing metric next to WER, detail and locking.
+- **Where the UTMOS gap is (20:15).** UTMOS22-strong on 30 validation clips
+  per voice (Lorenzo / Chiara):
+  - real clips: 4.04 / 4.22;
+  - real mel → Vocos 13.5M: 3.75 / 3.74;
+  - real mel → our vocoder: 3.47 / 3.56;
+  - full model: 3.42 / 3.27.
+  - The mel representation costs 0.3–0.5, our vocoder vs Vocos 0.2–0.3, and
+    the voice model only 0.05 (Lorenzo) to 0.3 (Chiara).
+  - The next naturalness work is after the voice model: a better vocoder,
+    then bypassing the mel bottleneck (backlog item 3).
