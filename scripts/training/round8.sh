@@ -35,8 +35,8 @@ neutral EF4 data/ef4-synth "data/em4-synth/train.jsonl" "data/em4-synth/validati
 until [ -f data/emotion-texts-v2.json ]; do sleep 60; done
 if ! grep -q 'EMOTION4-GEN-DONE' logs/emotion4-gen.log 2>/dev/null; then
   log "emotion4 generation: start"
-  PYTHONPATH=$LIB/qwenlib .venv/bin/python scripts/generate_emotions.py --root data/emotion4-synth --mode design --voices EM4 EF4 \
-    --emotion-texts data/emotion-texts-v2.json --clips-per-reference 100 --batch 16 >> logs/emotion4-gen.log 2>&1 \
+  PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True PYTHONPATH=$LIB/qwenlib .venv/bin/python scripts/generate_emotions.py --root data/emotion4-synth \
+    --mode design --voices EM4 EF4 --emotion-texts data/emotion-texts-v2.json --clips-per-reference 100 --batch 16 --memory-fraction 0.8 >> logs/emotion4-gen.log 2>&1 \
     && echo EMOTION4-GEN-DONE >> logs/emotion4-gen.log
   grep -q 'EMOTION4-GEN-DONE' logs/emotion4-gen.log || { log "emotion4 generation failed"; exit 1; }
 fi

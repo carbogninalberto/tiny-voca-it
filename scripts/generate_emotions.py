@@ -129,6 +129,7 @@ def main():
     parser.add_argument("--seed", type=int, default=20261117)
     parser.add_argument("--mode", choices=("design", "clone"), default="design")
     parser.add_argument("--emotion-texts", type=Path, default=Path("data/emotion-texts.json"))
+    parser.add_argument("--memory-fraction", type=float, default=0.0, help="Cap this process's share of GPU memory (0 = no cap)")
     args = parser.parse_args()
     voices = args.voices or (["EF1", "EM1"] if args.pilot else list(VOICES))
     per_reference = 5 if args.pilot else args.clips_per_reference
@@ -235,6 +236,8 @@ def design_main(args, voices, per_combination):
     done = {json.loads(l)["id"] for f in (manifest, rejected) if f.exists() for l in f.read_text().splitlines()}
     jobs = [j for j in jobs if j["id"] not in done]
     print(json.dumps({"to_generate": len(jobs), "already_done": len(done)}), flush=True)
+    if args.memory_fraction > 0:
+        torch.cuda.set_per_process_memory_fraction(args.memory_fraction)
     model = Qwen3TTSModel.from_pretrained(DESIGN, device_map="cuda:0", dtype=torch.bfloat16, attn_implementation="sdpa")
     start = time.time()
     for i in range(0, len(jobs), args.batch):

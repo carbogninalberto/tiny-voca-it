@@ -1071,3 +1071,9 @@ From now on decisions are made and recorded here, without waiting for approval.
   - New training option `--new-voice-init EM4=EM1 EF4=EF3`: appended voices
     start from the speaker rows of a similar existing voice rather than random
     rows.
+- **Emotion stage memory spill (04:23):**
+  - The watchdog alerted: VoiceDesign at batch 16 with no cap reached 15.8 GB
+    and spilled into shared memory (7 clips in 8 minutes).
+  - Fix: `generate_emotions.py --memory-fraction`, run at 0.8 with expandable
+    segments, the same settings as the neutral stage.
+  - Now 11 GB and about 32 accepted clips per minute; done around 05:35.
