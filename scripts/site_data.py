@@ -26,10 +26,10 @@ ROADMAP = [
     {"state": "done", "title": "Less metallic, no tremble", "when": "18 Nov", "text": "Retrained vocoder with a per-voice high-band pulse share; 5-frame pitch smoothing. Both preferred in blind tests."},
     {"state": "done", "title": "Public benchmark and vocoder over a range of pulse shares", "when": "19 Nov", "text": "MiniMax Italian test set (this page); vocoder fine-tuned so every per-voice setting is in distribution."},
     {"state": "done", "title": "Streaming", "when": "19 Nov", "text": "Sentence-level streaming in the browser: playback starts after the first sentence while the rest is synthesised. Next: chunked streaming inside long sentences, and a Python streaming API."},
-    {"state": "now", "title": "New voices Lorenzo and Chiara, much stronger emotions", "when": "in progress", "text": "Two designed voices with 5 h of speech each, 150 emotion-congruent sentences per emotion (5× more), a voice-similarity filter, and a pitch-change loss against tremble. Data generation now ~2.4× faster (CUDA graphs)."},
+    {"state": "done", "title": "New voices Lorenzo and Chiara, much stronger emotions", "when": "19 Nov", "text": "Two designed voices with 5 h of speech each, 150 emotion-congruent sentences per emotion (5× more), a voice-similarity filter, and a pitch-change loss against tremble. Data generation now ~2.4× faster (CUDA graphs)."},
     {"state": "next", "title": "Voice model: texture", "when": "next", "text": "Wider pitch range (now ~70% of real speech) and a noise-tolerant loss above 2 kHz."},
     {"state": "done", "title": "Numbers read the Italian way", "when": "19 Nov", "text": "Cardinals, decimals, percentages, euro amounts, times, dates and ordinals become words before phonemisation, identically in Python and in the browser."},
-    {"state": "next", "title": "Release", "when": "planned", "text": "Checkpoints, ONNX model and a model card; optional fine-tuning to a new voice from about 30 minutes of audio."},
+    {"state": "now", "title": "Release 0.2.0", "when": "19 Nov", "text": "Checkpoints, one-file ONNX, model card, samples and checksums prepared as a GitHub release (draft, awaiting publication)."},
     {"state": "next", "title": "tiny-voca-it-zs: zero-shot voice cloning", "when": "final", "text": "A separate, bigger model (about 8–10M parameters) with its own neural voice-fingerprint network: "
      "record 15 seconds and speak in that voice instantly, in the browser, with no training. Trained on hundreds of Italian voices; "
      "tiny-voca-it stays the small two-voice model."},
