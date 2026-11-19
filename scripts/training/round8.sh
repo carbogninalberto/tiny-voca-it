@@ -64,7 +64,7 @@ if ! grep -q 'ROUND8-PREP-DONE' logs/round8-prep.log 2>/dev/null; then
         --dataset-revision qwen3-$set-20261119 --config configs/italian-voice-round-8.json --device cuda --resume
     done
     # Emotion clips three times per epoch (oversampling: they are a small share of the hours).
-    for k in 1 2 3; do cat data/emotion4-annotations/train.jsonl; done > data/emotion4-annotations/train-x3.jsonl
+    .venv/bin/python -c "import json; rows=[json.loads(l) for l in open('data/emotion4-annotations/train.jsonl')]; open('data/emotion4-annotations/train-x3.jsonl','w').writelines(json.dumps({**r, 'id': r['id'] if k == 0 else r['id'] + '~' + str(k)}, ensure_ascii=False) + chr(10) for k in range(3) for r in rows)"
     echo ROUND8-PREP-DONE ) >> logs/round8-prep.log 2>&1
   grep -q 'ROUND8-PREP-DONE' logs/round8-prep.log || { log "round 8 prep failed"; exit 1; }
 fi

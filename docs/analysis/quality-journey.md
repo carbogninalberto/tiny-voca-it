@@ -1077,3 +1077,13 @@ From now on decisions are made and recorded here, without waiting for approval.
   - Fix: `generate_emotions.py --memory-fraction`, run at 0.8 with expandable
     segments, the same settings as the neutral stage.
   - Now 11 GB and about 32 accepted clips per minute; done around 05:35.
+- **Prep result (05:34):**
+  - The voice-similarity filter kept 1079 EM4 and 1083 EF4 emotional clips and
+    dropped 194 each. Median similarity to the reference was 0.89–0.95 for
+    every emotion (EM4 is lowest for joy and anger, 0.893).
+  - Emotion train split: 1858 clips (oversampled ×3 with unique IDs).
+  - Neutral train: EM4 1679 clips, 2.92 h; EF4 1795 clips, 2.88 h.
+  - Alignment probes: EF4 fricative→vowel boundaries are 98.6% within 2 frames.
+- **Voice-four** started at 05:38 after one fix: duplicate IDs are not allowed,
+  so oversampled copies get an `~k` suffix. It runs at 2.8 steps/s, so the
+  20k steps finish around 07:40.
