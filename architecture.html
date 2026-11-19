@@ -67,11 +67,12 @@
   .detail .head h2 { margin: 0; font-size: 26px; }
   .pill { font: 500 11px var(--mono); border: 1px solid var(--line-2); border-radius: 999px; padding: 2px 9px; color: var(--muted); }
   .pill.p { color: var(--p200); border-color: #8b7bf055; }
-  .cols { display: grid; grid-template-columns: 1.15fr .85fr; gap: 22px; margin-top: 14px; }
-  @media (max-width: 860px) { .cols { grid-template-columns: 1fr; } }
+  .cols { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr); gap: 22px; margin-top: 14px; }
+  .cols > div { min-width: 0; }
+  @media (max-width: 860px) { .cols { grid-template-columns: minmax(0, 1fr); } }
   .detail h4 { font: 500 11px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--p300); margin: 14px 0 6px; }
   .detail p, .detail li { color: #d6d6dc; font-size: 14.5px; } .detail ul { padding-left: 18px; margin: 6px 0; }
-  .shape { font: 12.5px/1.6 var(--mono); background: #0b0b0f; border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; color: #cfcfe6; white-space: pre; overflow-x: auto; }
+  .shape { font: 12.5px/1.6 var(--mono); background: #0b0b0f; border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; color: #cfcfe6; white-space: pre; overflow-x: auto; max-width: 100%; }
   .prev { display: flex; justify-content: space-between; margin-top: 16px; font-size: 13px; }
   .prev button { background: none; border: 1px solid var(--line-2); color: var(--muted); border-radius: 8px; padding: 5px 10px; cursor: pointer; font: 13px Inter, sans-serif; }
   .prev button:hover { color: var(--ink); border-color: var(--p300); }
@@ -93,6 +94,9 @@
   th { text-align: left; font: 500 11px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--line-2); }
   td { padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; } td.n { font-family: var(--mono); white-space: nowrap; }
   footer { border-top: 1px solid var(--line); margin-top: 70px; padding: 24px 20px; text-align: center; color: var(--dim); font-size: 13px; }
+
+  /* never let the page itself scroll sideways (wide diagrams scroll inside their own box) */
+  html, body { overflow-x: clip; max-width: 100%; }
 </style>
 </head>
 <body>

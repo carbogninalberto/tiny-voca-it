@@ -30,7 +30,7 @@
   .backdrop { position: fixed; inset: 0; z-index: -1; pointer-events: none;
     background: linear-gradient(90deg, #ffffff0a 1px, #0000 1px), linear-gradient(#ffffff0a 1px, #0000 1px); background-size: 56px 56px;
     -webkit-mask-image: radial-gradient(80% 60% at 50% 0, #000 40%, #0000 100%); mask-image: radial-gradient(80% 60% at 50% 0, #000 40%, #0000 100%); }
-  .glow { position: absolute; z-index: -1; left: 50%; top: -240px; width: 900px; height: 520px; transform: translateX(-50%); pointer-events: none;
+  .glow { position: absolute; z-index: -1; left: 50%; top: -240px; width: min(900px, 100vw); height: 520px; transform: translateX(-50%); pointer-events: none;
     background: radial-gradient(closest-side, #4b38d955, #0000); filter: blur(30px); }
   body::after { content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 50; opacity: .05;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
@@ -174,6 +174,9 @@
   .reveal { opacity: 0; transform: translateY(14px); transition: opacity .6s var(--ease), transform .6s var(--ease); }
   .reveal.in { opacity: 1; transform: none; }
   @media (prefers-reduced-motion: reduce) { .reveal { opacity: 1; transform: none; } .shimmer { animation: none; } }
+
+  /* never let the page itself scroll sideways (wide diagrams scroll inside their own box) */
+  html, body { overflow-x: clip; max-width: 100%; }
 </style>
 </head>
 <body>

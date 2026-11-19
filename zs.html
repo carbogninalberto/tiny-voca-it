@@ -41,6 +41,9 @@
   .take { display: flex; gap: 10px; align-items: center; font-size: 13px; color: var(--muted); }
   .take audio { height: 32px; }
   .mine { margin-top: 12px; }
+
+  /* never let the page itself scroll sideways (wide diagrams scroll inside their own box) */
+  html, body { overflow-x: clip; max-width: 100%; }
 </style>
 </head>
 <body>
