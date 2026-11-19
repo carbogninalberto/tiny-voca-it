@@ -45,6 +45,8 @@ def main():
     real = {}
     for v in held + seen:
         clips = [r for r in rows if r["voice_id"] == v]
+        if not (a.root / "refs" / f"{v}.wav").exists():
+            clips = clips[1:]          # the first clip served as the reference: never compare against it
         real[v] = torch.stack([embed(*sf.read(a.root / r["audio"])) for r in clips[:8]])
     results = {}
     for group, members in (("unseen", held), ("seen", seen)):
