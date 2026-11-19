@@ -203,7 +203,7 @@
       <div><b>6.8M</b><span>parameters</span></div>
       <div><b id="stat-rtf">22×</b><span>real time · 1 CPU thread</span></div>
       <div><b id="stat-wer">–</b><span>WER · MiniMax IT</span></div>
-      <div><b>2</b><span>voices · IT1, EF3</span></div>
+      <div><b>2</b><span>voices · Lorenzo, Chiara</span></div>
     </div>
   </header>
 
@@ -263,7 +263,7 @@
         coherent without a large network. Above 2.5 kHz the pulse share is set per voice to match real speech.</p></div>
       <div class="card"><div class="num">B</div><h3>Adversarial fine-tuning</h3><p>Multi-period and multi-resolution critics, a pitch-spread loss against monotone speech,
         and distillation from Vocos at spectrum level.</p></div>
-      <div class="card"><div class="num">C</div><h3>Two curated voices</h3><p>IT1, a CML-TTS audiobook reader, and EF3, 6 h of a cloned synthetic voice screened with Whisper.
+      <div class="card"><div class="num">C</div><h3>Two designed voices</h3><p>Lorenzo and Chiara: designed voices, 5 h of speech each plus emotional speech, screened with Whisper and a voice-similarity check.
         A 5-frame pitch smoothing removes frame-level tremble.</p></div>
     </div>
   </section>
@@ -291,10 +291,10 @@
       <div class="card"><h3>Privacy and runtime</h3><ul>
         <li>Everything runs locally with ONNX Runtime Web (single-thread WebAssembly).</li>
         <li>No text or audio is sent to a server; the model is cached by your browser.</li>
-        <li>EF3 is a synthetic voice, generated with Qwen3-TTS; IT1 is a LibriVox reader from CML-TTS.</li></ul></div>
+        <li>Lorenzo and Chiara are synthetic voices, generated with Qwen3-TTS; label their audio as synthetic.</li></ul></div>
       <div class="card"><h3>Credits and licences</h3><ul>
         <li>Code and weights: Apache-2.0, based on <a href="https://github.com/n4ze3m/tiny-voca">tiny-voca</a> by Muhammed Nazeem.</li>
-        <li>Data: <a href="https://github.com/freds0/CML-TTS-Dataset">CML-TTS</a> Italian (CC BY 4.0); synthetic EF3 speech from Qwen3-TTS (Apache-2.0 weights).</li>
+        <li>Data: <a href="https://github.com/freds0/CML-TTS-Dataset">CML-TTS</a> Italian (CC BY 4.0); synthetic speech of the two voices from Qwen3-TTS (Apache-2.0 weights).</li>
         <li>Vocoder teacher: <a href="https://github.com/gemelo-ai/vocos">Vocos</a> (MIT). Phonemizer: <a href="https://github.com/espeak-ng/espeak-ng">eSpeak NG</a> (GPL-3.0), served unmodified.</li></ul></div>
       <div class="card"><h3>Reproduce</h3><ul>
         <li>Training recipes, round scripts and watchdogs: <code>scripts/training/</code>.</li>

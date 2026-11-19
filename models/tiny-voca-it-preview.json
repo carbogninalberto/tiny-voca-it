@@ -13,7 +13,9 @@
   "EF2",
   "EM2",
   "EF3",
-  "EM3"
+  "EM3",
+  "EM4",
+  "EF4"
  ],
  "symbols": [
   "<pad>",
@@ -85,7 +87,7 @@
  ],
  "max_tokens": 512,
  "max_frames": 3000,
- "step": 115000,
+ "step": 135000,
  "frontend": "espeak",
  "frontend_fingerprint": "5a2a45be8de071790ce9852d9b7d382231f9dd9e0ce2ad9a300fc37aba4fd494",
  "inputs": [
