@@ -88,3 +88,20 @@ Judged on UTMOS, the copy-synthesis split above, WER and blind tests.
   split true streaming needs.
 - **UTMOS** as an automatic naturalness score, now measured for our model too
   (`docs/benchmarks/minimax-it/`).
+
+## 4. Swappable voice adapters (planned, NOT started; decided 20 November)
+
+Blueprint: frozen multi-speaker base · per-voice adapter of ~110k numbers (conditional LayerNorm scale/shift in
+every block ≈ 8k, LoRA rank 4–8 on the prosody and acoustic feed-forward layers ≈ 100k, explicit log-F0
+median/spread and tempo) · frozen text encoder and shared vocoder · a hypernetwork (voice code → adapter) for
+an instant zero-shot start, polished by a 1–3 min fine-tune on Qwen3-TTS speech in the target voice. Adapters
+are ONNX inputs: swapping voice = swapping a 200 KB tensor. Sources: AdaSpeech / AdaSpeech 4, residual adapters
+(Morioka et al. 2022), Mixture of Adapters, HyperTTS, Meta-TTS.
+
+Steps, each gated on the previous measurement (ECAPA vs a recording session not used for fitting, pass ≥ 0.538):
+1. **Adapter-size test (~1 h GPU):** Qwen3-TTS generates ~10 min in the user's voice; train adapters of
+   ~10k / ~100k / ~300k numbers on the frozen Lorenzo base; score each. Question: does ~100k reach 0.54?
+2. **Base with adapter slots (~2 days):** retrain the base with conditional LayerNorm driven by a speaker
+   code, on Qwen3-TTS clones of 1,000+ real Italian speakers.
+3. **Hypernetwork (~1 day):** map a whitened voice code (speaker embedding + F0/tempo/long-term spectrum)
+   to the adapter; zero-shot start, optional short fine-tune.
