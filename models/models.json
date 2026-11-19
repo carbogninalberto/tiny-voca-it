@@ -1,3 +1,13 @@
 [
-  {"id": "preview", "file": "tiny-voca-it-preview", "label": "Lorenzo + Chiara · updated 2026-11-19 08:10", "voice": "EM4", "voices": ["EM4", "EF4"]}
+ {
+  "id": "preview",
+  "file": "tiny-voca-it-preview",
+  "label": "Lorenzo + Chiara · updated 2026-11-19 09:20",
+  "voice": "EM4",
+  "voices": [
+   "EM4",
+   "EF4"
+  ],
+  "hash": "5fa4d45c38c095a4"
+ }
 ]
