@@ -16,7 +16,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-SAMPLES = ["Buongiorno! Questa è una prova del modello tiny-voca, addestrato da zero sulla lingua italiana.",
+SAMPLES = ["Questa è una prova del modello tiny-voca, addestrato da zero sulla lingua italiana.",
            "Il treno per Firenze parte alle 12:30 dal binario 7.",
            "Hai già prenotato il ristorante per domani sera?"]
 EMOTION_SAMPLES = {"joy": "Non ci posso credere, abbiamo vinto! È la notizia più bella dell'anno!",
