@@ -1196,3 +1196,14 @@ From now on decisions are made and recorded here, without waiting for approval.
 - **Setup:** weight 20 (about 9% of the loss), 8k steps at lr 5e-5 from the
   release EMA weights. Judged on detail, mel error and locking per voice, plus
   a blind test.
+- **Page options (13:40):**
+  - A model-precision selector built by `scripts/pages_variants.py`: int8
+    (default, 8.6 MB), fp16 weights (14.6 MB), fp32 (28.0 MB) and int4 (5.9 MB,
+    `MatMulNBits`, supported by ONNX Runtime Web 1.20). All four tested in a
+    headless browser.
+  - In the browser, int8 is the slowest (about 5× real time against 7× for the
+    others): `MatMulInteger` is slow in WebAssembly. int4 is the smallest and as
+    fast as fp32.
+  - A ~2000-character long text (2,112 characters, 27 sentences): 157 s of
+    audio, first audio after 0.75 s, all in 21 s.
+  - The default sentence no longer starts with "Buongiorno!".
