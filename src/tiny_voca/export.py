@@ -39,7 +39,7 @@ from torch import nn
 import torch.nn.functional as F
 
 from .infer import load_model, match_frontend
-from .model import COMPRESSION, PITCH_SMOOTH_FRAMES, jitter_offset, pulse_gate
+from .model import COMPRESSION, EMOTION_SPEED, PITCH_SMOOTH_FRAMES, jitter_offset, pulse_gate
 from .losses import VocosMel
 from .text import frontend_fingerprint, frontend_identity
 from .vocoder import load_vocoder
@@ -83,6 +83,8 @@ class Exportable(nn.Module):
         self.model = model
         self.external_noise = external_noise
         self.emotional = model.emotions is not None
+        if self.emotional:
+            self.register_buffer("emotion_speed", torch.tensor([EMOTION_SPEED.get(e, 1.0) for e in model.config.emotions]), persistent=False)
         self.neural = vocoder
         if vocoder is not None:
             vc = vocoder.config
@@ -290,6 +292,8 @@ class Exportable(nn.Module):
         c = m.config
         if self.emotional:
             emotion, intensity, *extra = extra
+            # Emotion tempo (model.EMOTION_SPEED), linear in intensity, as in TinyVoca.synthesize.
+            speed = speed * (1 + (self.emotion_speed[emotion] - 1) * intensity)
         noise = extra[0] if extra else None
         token_mask = torch.ones_like(tokens, dtype=torch.bool)
         x = m.tokens(tokens) + m.stress(stress) + m.voices(voice)[:, None]

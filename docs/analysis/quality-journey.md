@@ -1087,3 +1087,22 @@ From now on decisions are made and recorded here, without waiting for approval.
 - **Voice-four** started at 05:38 after one fix: duplicate IDs are not allowed,
   so oversampled copies get an `~k` suffix. It runs at 2.8 steps/s, so the
   20k steps finish around 07:40.
+- **Voice-four result and first publish (08:10):**
+  - Spectral error above 1 kHz (validation, model spectrograms through
+    vocoder-three): EM4 0.569 → 0.549 and EF4 0.631 → 0.597, from 118k to 135k.
+    It plateaued after about 130k.
+  - Emotion mismatch: the mean over emotions of |Δpitch| + |Δrange| +
+    |Δloudness| + 10·|Δrate| against the data. EM4 5.18 → 6.08, EF4 7.68 → 6.77.
+    Step 135k is best overall.
+  - Pitch cues are learned. **Tempo is not**: sadness is 0.93× in the model and
+    0.80× in the data.
+  - Fix: `model.EMOTION_SPEED`, a per-emotion speed multiplier at intensity 1,
+    linear in intensity, in `synthesize` and in the ONNX graph. Values: sadness
+    0.86, anger 1.08, surprise 1.06, fear 1.05. Only the ratios consistent across
+    both voices are used; the pitch residuals disagree between voices and are
+    left alone. Tested (`EmotionSpeedTests`).
+  - Published voice-four 135k with vocoder-three to Pages, labelled
+    "Lorenzo + Chiara". The playground offers EM4 and EF4.
+  - On "double the data and train to 260k": the curve plateaued after about
+    6k steps, and IT1 with 11.4 h plateaued at a similar error. The limit looks
+    like model capacity, so a modestly larger model is the better experiment.

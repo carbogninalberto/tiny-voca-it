@@ -24,6 +24,19 @@ from .config import Config
 
 # Frames of the inference-time pitch smoothing (TinyVoca.smooth_pitch); 1 = off.
 PITCH_SMOOTH_FRAMES = 5
+# Speaking-rate multiplier per emotion at intensity 1 (linear in intensity), applied at synthesis time.
+# Measured, round 8: the emotional data speak sadness about 14% slower and anger/surprise/fear faster
+# than the trained model does (consistent across EM4 and EF4); the model learned the pitch cues but
+# not these tempo changes. Emotions not listed keep the model's own rate.
+EMOTION_SPEED = {"sadness": 0.86, "anger": 1.08, "surprise": 1.06, "fear": 1.05}
+
+
+def emotion_speed(emotions_config, emotions, intensities, speed):
+    """Per-row speed [B, 1] (or the plain float) with the emotion tempo applied."""
+    if emotions is None or intensities is None or not emotions_config:
+        return speed
+    table = torch.tensor([EMOTION_SPEED.get(name, 1.0) for name in emotions_config], device=emotions.device)
+    return (speed * (1 + (table[emotions] - 1) * intensities.to(table.dtype)))[:, None]
 
 
 def length_mask(lengths, size=None):
@@ -587,7 +600,7 @@ class TinyVoca(nn.Module):
         if not math.isfinite(speed) or not 0.25 <= speed <= 4 or not math.isfinite(pitch_shift) or not 0 <= pitch_range <= 3:
             raise ValueError("speed must be between 0.25 and 4, pitch_shift finite and pitch_range between 0 and 3")
         hidden, mask = self.encode(tokens, stress, lengths, speakers, emotions, intensities)
-        durations = self.predict_durations(hidden, mask, tokens, speed)
+        durations = self.predict_durations(hidden, mask, tokens, emotion_speed(self.config.emotions, emotions, intensities, speed))
         frames, frame_mask, frame_lengths = self.expand(hidden, durations, mask, speakers, emotions, intensities)
         prosody_hidden, prosody = self.predict_prosody(frames, frame_mask)
         if voiced_vowels:

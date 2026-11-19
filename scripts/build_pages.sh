@@ -57,7 +57,7 @@ if [ -n "${PREVIEW_VOICE:-}" ]; then
   VOICES_JSON=$(printf '"%s", ' ${PREVIEW_VOICES:-IT1 EF3}); VOICES_JSON="[${VOICES_JSON%, }]"
   "$PYTHON" -W ignore -m tiny_voca.export --checkpoint "$PREVIEW_VOICE" --vocoder "$PREVIEW_VOCODER" --output "$OUT/models/tiny-voca-it-preview.onnx"
   STAMP=$(TZ=Europe/Rome date "+%Y-%m-%d %H:%M")
-  PREVIEW_ENTRY="  {\"id\": \"preview\", \"file\": \"tiny-voca-it-preview\", \"label\": \"Preview · IT1 + EF3, emotion, neural vocoder · updated $STAMP\", \"voice\": \"IT1\", \"voices\": $VOICES_JSON}"
+  PREVIEW_ENTRY="  {\"id\": \"preview\", \"file\": \"tiny-voca-it-preview\", \"label\": \"${PREVIEW_LABEL:-Preview} · updated $STAMP\", \"voice\": \"${PREVIEW_DEFAULT:-IT1}\", \"voices\": $VOICES_JSON}"
 fi
 cat > "$OUT/models/models.json" <<EOF
 [

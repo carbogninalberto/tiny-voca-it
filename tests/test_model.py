@@ -635,5 +635,25 @@ class PitchSmoothingTests(unittest.TestCase):
         self.assertLess(float((again[:, :80] - smoothed).abs().max()), 1e-5)
 
 
+class EmotionSpeedTests(unittest.TestCase):
+    def test_sadness_slows_and_export_agrees(self):
+        from tiny_voca.config import Config
+        from tiny_voca.export import Exportable
+        from tiny_voca.model import EMOTION_SPEED, TinyVoca
+        torch.manual_seed(0)
+        model = TinyVoca(Config(emotions=("neutral", "sadness"))).eval()
+        torch.nn.init.zeros_(model.duration.out.weight)
+        model.duration.out.bias.data[:] = torch.tensor([2.5, 1.0])
+        tokens = torch.randint(20, 40, (1, 30)); stress = torch.zeros_like(tokens); lengths = torch.tensor([30])
+        def frames(intensity):
+            _, _, d = model.synthesize(tokens, stress, lengths, torch.tensor([0]), emotions=torch.tensor([1]), intensities=torch.tensor([intensity]))
+            return int(d["durations"].sum())
+        self.assertGreater(frames(1.0), frames(0.0) * (1 / EMOTION_SPEED["sadness"]) * 0.97)
+        one = lambda v: torch.tensor([v], dtype=torch.float32)
+        with torch.no_grad():
+            _, exported = Exportable(model)(tokens, stress, torch.tensor([0]), one(1.0), one(0.0), one(1.0), torch.tensor([1]), one(1.0))
+        self.assertEqual(int(exported.sum()), frames(1.0))
+
+
 if __name__ == "__main__":
     unittest.main()
