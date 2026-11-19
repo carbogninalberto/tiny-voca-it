@@ -182,7 +182,7 @@
   <a class="brand" href="#top"><i></i>tiny-voca-it</a>
   <div class="links">
     <a href="#playground">Playground</a><a href="#architecture">Architecture</a><a href="#benchmarks">Benchmarks</a>
-    <a href="#notes">Notes</a><a href="#status">Status</a>
+    <a href="#notes">Notes</a><a href="#status">Status</a><a href="zs.html">Zero-shot ✦</a>
     <a class="gh" href="https://github.com/carbogninalberto/tiny-voca-it">GitHub ↗</a>
   </div>
 </div></nav>
@@ -538,7 +538,7 @@ $("speak").onclick = speak;
 $("model").onchange = load;
 $("text").addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); speak(); } });
 fetch("models/models.json").then(r => r.json()).then(list => {
-  models = list;
+  models = list.filter(m => !m.hidden);   // hidden entries belong to other pages (zs.html)
   $("model").replaceChildren(...models.map(m => new Option(m.label, m.id)));
   $("model-box").hidden = models.length < 2;
   load();

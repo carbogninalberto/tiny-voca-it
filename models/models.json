@@ -50,5 +50,19 @@
   "precision": "int4",
   "megabytes": 5.9,
   "hash": "98896b5332e5c1f9"
+ },
+ {
+  "id": "zs-pilot",
+  "file": "zs-pilot",
+  "label": "tiny-voca-it-zs pilot",
+  "hidden": true,
+  "hash": "7e9103c90b55cd03"
+ },
+ {
+  "id": "zs-fingerprint",
+  "file": "zs-fingerprint",
+  "label": "voice fingerprint (WavLM-SV, int4)",
+  "hidden": true,
+  "hash": "0c4352c6f512ca7f"
  }
 ]
