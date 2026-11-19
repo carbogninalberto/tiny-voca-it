@@ -45,6 +45,10 @@ echo "stages 3-5 are appended once the texts and filter are ready" >> logs/round
 
 # 3. voice-similarity filter + splits for the emotion set, then features and alignment for all three sets.
 if ! grep -q 'ROUND8-PREP-DONE' logs/round8-prep.log 2>/dev/null; then
+  # The GPU is free now: stop the CPU pipelining job (resumable) so the two never write the same set.
+  for P in $(ps -eo pid,args | awk '$3=="logs/round8-cpuprep.sh"{print $1}'); do kill $P; done
+  for P in $(ps -eo pid,args | awk '$3=="-m" && ($4=="tiny_voca.prepare" || $4=="tiny_voca.annotate"){print $1}'); do kill $P; done
+  sleep 5
   log "round 8 prep: start"
   ( set -e
     .venv/bin/python scripts/filter_speaker.py --root data/emotion4-synth --references data/voice-refs \
