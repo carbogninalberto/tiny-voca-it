@@ -66,4 +66,14 @@ $( [ -n "$PREVIEW_ENTRY" ] && echo "$PREVIEW_ENTRY" || printf '%s\n' \
   '  {"id": "it2", "file": "tiny-voca-it-IT2-adapted", "label": "IT2 · adapted voice (28 min of data)"}' )
 ]
 EOF
+# Content hash per model: the browser caches a model under it, so a changed model is fetched again.
+"$PYTHON" - "$OUT/models" <<'PY'
+import hashlib, json, sys
+from pathlib import Path
+root = Path(sys.argv[1]); entries = json.loads((root / "models.json").read_text())
+for e in entries:
+    digest = hashlib.sha256((root / f"{e['file']}.onnx").read_bytes() + (root / f"{e['file']}.json").read_bytes()).hexdigest()
+    e["hash"] = digest[:16]
+(root / "models.json").write_text(json.dumps(entries, ensure_ascii=False, indent=1) + "\n")
+PY
 du -sh "$OUT"; find "$OUT" -type f | sort

@@ -17,13 +17,19 @@ const sessions = new Map();
 let current = null;
 const status = (text, progress) => postMessage({ type: "status", text, progress });
 
-async function download(url, label) {
-  const key = `${url}?v=${VERSION}`;
+async function download(url, label, hash) {
+  // Cached by content hash (models.json carries it), so a new model under the same file name is fetched
+  // again and the stale copy is dropped; files without a hash fall back to the page VERSION.
+  const key = `${url}?v=${hash || VERSION}`;
   let store = null;
   try {
-    store = await caches.open("tiny-voca-it-" + VERSION);
+    store = await caches.open("tiny-voca-it");
     const hit = await store.match(key);
     if (hit) return new Uint8Array(await hit.arrayBuffer());
+    for (const request of await store.keys()) {
+      if (new URL(request.url).pathname.endsWith(url.replace(/^\.?\/?/, "")) && !request.url.endsWith(key)) await store.delete(request);
+    }
+    await caches.delete("tiny-voca-it-" + VERSION);   // the old per-version store
   } catch { store = null; }
   const response = await fetch(key);
   if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
@@ -71,8 +77,8 @@ async function loadEspeak() {
 
 async function loadModel(entry) {
   if (!sessions.has(entry.id)) {
-    const metadata = await (await fetch(`models/${entry.file}.json?v=${VERSION}`)).json();
-    const bytes = await download(`models/${entry.file}.onnx`, `Loading ${entry.label}`);
+    const metadata = await (await fetch(`models/${entry.file}.json?v=${entry.hash || VERSION}`)).json();
+    const bytes = await download(`models/${entry.file}.onnx`, `Loading ${entry.label}`, entry.hash);
     status("Starting the model");
     const session = await ort.InferenceSession.create(bytes, { executionProviders: ["wasm"] });
     sessions.set(entry.id, { session, metadata });
