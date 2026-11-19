@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-19 10:17 CET",
+ "updated": "2026-11-19 10:18 CET",
  "pill": "Large-model intelligibility at 6.8M parameters",
  "benchmark": {
   "ours": {
@@ -144,9 +144,9 @@
    "text": "Sentence-level streaming in the browser: playback starts after the first sentence while the rest is synthesised. Next: chunked streaming inside long sentences, and a Python streaming API."
   },
   {
-   "state": "now",
+   "state": "done",
    "title": "New voices Lorenzo and Chiara, much stronger emotions",
-   "when": "in progress",
+   "when": "19 Nov",
    "text": "Two designed voices with 5 h of speech each, 150 emotion-congruent sentences per emotion (5× more), a voice-similarity filter, and a pitch-change loss against tremble. Data generation now ~2.4× faster (CUDA graphs)."
   },
   {
@@ -162,10 +162,10 @@
    "text": "Cardinals, decimals, percentages, euro amounts, times, dates and ordinals become words before phonemisation, identically in Python and in the browser."
   },
   {
-   "state": "next",
-   "title": "Release",
-   "when": "planned",
-   "text": "Checkpoints, ONNX model and a model card; optional fine-tuning to a new voice from about 30 minutes of audio."
+   "state": "now",
+   "title": "Release 0.2.0",
+   "when": "19 Nov",
+   "text": "Checkpoints, one-file ONNX, model card, samples and checksums prepared as a GitHub release (draft, awaiting publication)."
   },
   {
    "state": "next",
