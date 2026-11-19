@@ -111,8 +111,9 @@ python -m tiny_voca.infer \
 
 The model reads one sentence at a time. Split long text first.
 
-The checkpoints of the current models are not published yet. The released
-single-voice checkpoints from the first Italian round are in `models/italian/`.
+Release checkpoints, the one-file ONNX model, samples and the model card are on
+[GitHub Releases](https://github.com/carbogninalberto/tiny-voca-it/releases/latest) (v0.2.0: Lorenzo and Chiara).
+The single-voice checkpoints of the first Italian round are in `models/italian/`.
 
 ## Playgrounds
 

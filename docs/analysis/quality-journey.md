@@ -1120,3 +1120,4 @@ From now on decisions are made and recorded here, without waiting for approval.
     line into an event, alerts on tracebacks, GPU spill and RAM, restarts dead
     rounds and keeps the playground alive. Lesson: the round-8 watchdog exited
     with the round, and 30 minutes were lost after vocoder-four finished.
+- **Release 0.2.0 published (10:55)** at the user's request: GitHub Releases v0.2.0 (latest).
