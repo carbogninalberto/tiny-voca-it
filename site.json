@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-19 10:18 CET",
+ "updated": "2026-11-19 10:25 CET",
  "pill": "Large-model intelligibility at 6.8M parameters",
  "benchmark": {
   "ours": {
@@ -151,7 +151,7 @@
   },
   {
    "state": "next",
-   "title": "Voice model: texture",
+   "title": "Voice model: intonation range and texture",
    "when": "next",
    "text": "Wider pitch range (now ~70% of real speech) and a noise-tolerant loss above 2 kHz."
   },
@@ -162,10 +162,16 @@
    "text": "Cardinals, decimals, percentages, euro amounts, times, dates and ordinals become words before phonemisation, identically in Python and in the browser."
   },
   {
-   "state": "now",
+   "state": "done",
    "title": "Release 0.2.0",
    "when": "19 Nov",
-   "text": "Checkpoints, one-file ONNX, model card, samples and checksums prepared as a GitHub release (draft, awaiting publication)."
+   "text": "Checkpoints, one-file ONNX, model card, samples and checksums on GitHub Releases (v0.2.0)."
+  },
+  {
+   "state": "now",
+   "title": "Clearer highs: a slightly larger voice model",
+   "when": "in progress",
+   "text": "Quality has plateaued at the model's size; a voice model about 30% larger (deeper acoustic stack, still under 9M in total) is trained from the release and kept only if it measures and sounds better."
   },
   {
    "state": "next",
