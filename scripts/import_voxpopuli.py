@@ -45,14 +45,25 @@ def main():
         for m in rows:
             need[m[0]].append(m)
     out, voices = [], {}
+    taken = collections.Counter()
     for f, rows in need.items():
         wanted = {m[1]: m for m in rows}
-        table = pq.read_table(f, columns=["audio"]).column("audio")
+        # Stream the audio column in small batches (a shard is ~3 GB; reading it whole exhausted RAM).
+        offset, items = 0, {}
+        for batch in pq.ParquetFile(f).iter_batches(batch_size=64, columns=["audio"]):
+            column = batch.column(0)
+            for j in range(len(column)):
+                if offset + j in wanted:
+                    items[offset + j] = column[j].as_py()
+            offset += len(column)
+            del batch, column
+            if len(items) == len(wanted):
+                break
         for i, m in sorted(wanted.items()):
             s = m[5]
-            if sum(1 for r in out if r["speaker_id"] == s) >= a.clips:
+            if taken[s] >= a.clips or i not in items:
                 continue
-            item = table[i].as_py()
+            item = items.pop(i)
             wave, rate = sf.read(io.BytesIO(item["bytes"]))
             if wave.ndim > 1:
                 wave = wave.mean(1)
@@ -61,7 +72,7 @@ def main():
                 continue
             wave = librosa.resample(wave.astype(np.float32), orig_sr=rate, target_sr=24000)
             vid = ids[s]; clip = f"{vid.lower()}-{m[2]}"
-            sf.write(a.root / "audio" / f"{clip}.wav", wave, 24000)
+            sf.write(a.root / "audio" / f"{clip}.wav", wave, 24000); taken[s] += 1
             out.append({"id": clip, "text": m[3], "voice_id": vid, "speaker": vid, "speaker_id": s, "emotion": "neutral", "intensity": 0.0,
                         "audio": f"audio/{clip}.wav", "origin": "voxpopuli-it", "source_license": "CC0 1.0 (VoxPopuli)", "held_out": s in held})
             voices[vid] = {"gender": m[4], "source_speaker": s, "held_out": s in held, "description": f"VoxPopuli Italian speaker {s} ({m[4]})"}
