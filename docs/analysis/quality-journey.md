@@ -1139,3 +1139,29 @@ From now on decisions are made and recorded here, without waiting for approval.
   against the release with vocoder-four.
 - **Kept only if** it is better on both voices (spectral error, locking, emotion
   match) and in a blind test. It is about 26% larger and somewhat slower on CPU.
+
+### 6.11 Smaller ONNX files (19 November, 11:30)
+
+- **Lean graph:** the STFT analysis and synthesis kernels (about 20 MB of float32,
+  partly duplicated) are computed inside the graph from the windows
+  (`export._runtime_kernels`, tied to a runtime zero so the exporter cannot
+  fold them back). The angles use the exact integer k·n mod N.
+  - 47.4 → **28.0 MB**. Export parity tests pass.
+  - Speed: 26.7× → 24.4× real time on one CPU thread (tables rebuilt per
+    sentence).
+- **Variants** (`scripts/quantize_onnx.py`), checked with
+  `scripts/compare_onnx.py` on 40 MiniMax sentences. The graph's noise is
+  seeded, so fp32 vs fp32 is exactly 0.
+
+  | variant | size | same durations | mel L1 to fp32 | Whisper-small WER |
+  |---|---|---|---|---|
+  | fp32 lean | 28.0 MB | – | 0 | 3.83% |
+  | fp16 weights (fp32 compute) | 14.6 MB | 40/40 | 0.23 | 3.83% |
+  | int8 dynamic (MatMul, Conv) | 8.2 MB | 2/40 | – (timing differs) | 3.72% |
+  | int4 MatMulNBits, block 32 (rest fp16w) | 5.9 MB | 0/40 | – | 4.41% |
+
+  - All variants run at 22–24× real time on one CPU thread.
+  - int8 and int4 change the predicted durations of most sentences;
+    intelligibility is the same for int8 and slightly lower for int4.
+  - A blind test (Q files, key `quant-key.json`) decides which go to the page
+    and the release.

@@ -75,6 +75,24 @@ def _synthesis_kernel(window):
     return (torch.cat((real, imaginary)) * window.double())[:, None].float().contiguous()
 
 
+def _runtime_kernels(window, zero):
+    """The analysis (real, imaginary), synthesis and envelope kernels of ``_analysis_kernels`` /
+    ``_synthesis_kernel``, computed inside the graph from the window instead of stored: the tables are
+    ~20 MB of float32 for a 24 kHz model, the windows a few kB. ``zero`` is a 0 that depends on a graph
+    input, so the exporter cannot fold the computation back into constants. Angles use the exact
+    integer product k * n mod fft (exact in float32 below 2**24)."""
+    fft = window.shape[0]
+    bins = fft // 2 + 1
+    n = torch.arange(fft, dtype=torch.float32) + zero
+    k = torch.arange(bins, dtype=torch.float32) + zero
+    angle = torch.remainder(k[:, None] * n[None, :], float(fft)) * (2 * math.pi / fft)
+    cos, sin = torch.cos(angle), torch.sin(angle)
+    real, imaginary = (cos * window)[:, None], (-sin * window)[:, None]
+    scale = torch.cat((torch.ones(1), torch.full((bins - 2,), 2.0), torch.ones(1))) / fft + zero
+    synthesis = (torch.cat((scale[:, None] * cos, -scale[:, None] * sin)) * window)[:, None]
+    return real, imaginary, synthesis
+
+
 class Exportable(nn.Module):
     """Single-utterance synthesis in ONNX-friendly operations."""
 
@@ -92,10 +110,7 @@ class Exportable(nn.Module):
                 raise ValueError("the vocoder and the voice model use different sample rates")
             mel = VocosMel(vc.sample_rate, vc.fft, vc.hop, vc.bands)
             self.register_buffer("mel_filters", mel.filters, persistent=False)
-            real, imaginary = _analysis_kernels(vocoder.window)
-            self.register_buffer("neural_analysis_real", real, persistent=False)
-            self.register_buffer("neural_analysis_imaginary", imaginary, persistent=False)
-            self.register_buffer("neural_synthesis", _synthesis_kernel(vocoder.window), persistent=False)
+            self.register_buffer("neural_window", vocoder.window.float().clone(), persistent=False)
             self.register_buffer("neural_envelope", (vocoder.window.double() ** 2).float()[None, None].contiguous(), persistent=False)
             if vc.prior and vc.prior_high_hz > 0:
                 # Per-voice high-band pulse share, indexed by the ``voice`` input.
@@ -113,24 +128,30 @@ class Exportable(nn.Module):
             self.register_buffer(f"{name}_imaginary", imaginary, persistent=False)
         windows = [("synth", v.synth_window), ("noise", v.noise_window)] + ([("head", v.head.window)] if v.head is not None else [])
         for name, window in windows:
-            real, imaginary = _analysis_kernels(window)
-            self.register_buffer(f"{name}_analysis_real", real, persistent=False)
-            self.register_buffer(f"{name}_analysis_imaginary", imaginary, persistent=False)
-            self.register_buffer(f"{name}_synthesis", _synthesis_kernel(window), persistent=False)
+            self.register_buffer(f"{name}_window", window.float().clone(), persistent=False)
             self.register_buffer(f"{name}_envelope", (window.double() ** 2).float()[None, None].contiguous(), persistent=False)
         self.register_buffer("ramp", torch.arange(c.hop, dtype=torch.float32) / c.hop, persistent=False)
         self.phase_steps = 1 << 24
+        self._zero, self._kernels = None, {}
+
+    def _kernel(self, name, part):
+        """STFT kernels of window ``name`` (0 analysis real, 1 analysis imaginary, 2 synthesis), built once
+        per forward pass from the window (see ``_runtime_kernels``)."""
+        if name not in self._kernels:
+            zero = self._zero if self._zero is not None else torch.zeros(())
+            self._kernels[name] = _runtime_kernels(getattr(self, f"{name}_window"), zero)
+        return self._kernels[name][part]
 
     def _filter(self, source, real, imaginary, name, fft, hop):
         """Multiply the STFT of ``source`` [1, samples] by a response given as
         real and imaginary parts [1, frames, bins], and resynthesize."""
         samples = source.shape[1]
         padded = F.pad(source[:, None], (fft // 2, fft))
-        s_real = F.conv1d(padded, getattr(self, f"{name}_analysis_real"), stride=hop)
-        s_imaginary = F.conv1d(padded, getattr(self, f"{name}_analysis_imaginary"), stride=hop)
+        s_real = F.conv1d(padded, self._kernel(name, 0), stride=hop)
+        s_imaginary = F.conv1d(padded, self._kernel(name, 1), stride=hop)
         real, imaginary = real.transpose(1, 2), imaginary.transpose(1, 2)
         product = torch.cat((s_real * real - s_imaginary * imaginary, s_real * imaginary + s_imaginary * real), dim=1)
-        wave = F.conv_transpose1d(product, getattr(self, f"{name}_synthesis"), stride=hop)
+        wave = F.conv_transpose1d(product, self._kernel(name, 2), stride=hop)
         envelope = F.conv_transpose1d(torch.ones_like(s_real[:, :1]), getattr(self, f"{name}_envelope"), stride=hop)
         return (wave / envelope)[:, 0, fft // 2:fft // 2 + samples]
 
@@ -209,8 +230,8 @@ class Exportable(nn.Module):
         """Centred, reflection-padded STFT (as torch.stft) -> real, imaginary [1, bins, samples // hop + 1]."""
         fft, hop = self.neural.config.fft, self.neural.config.hop
         padded = F.pad(wave[:, None], (fft // 2, fft // 2), mode="reflect")
-        return (F.conv1d(padded, self.neural_analysis_real, stride=hop),
-                F.conv1d(padded, self.neural_analysis_imaginary, stride=hop))
+        return (F.conv1d(padded, self._kernel("neural", 0), stride=hop),
+                F.conv1d(padded, self._kernel("neural", 1), stride=hop))
 
     def _neural(self, wave, f0, voiced, total, voice):
         """Source-filter waveform -> Vocos log-mel -> neural vocoder (``Vocoder.forward``)."""
@@ -244,7 +265,7 @@ class Exportable(nn.Module):
             unit_imaginary = torch.where(zero, torch.zeros_like(prior_imaginary), prior_imaginary / torch.where(zero, torch.ones_like(prior_magnitude), prior_magnitude))
             cos, sin = unit_real * cos - unit_imaginary * sin, unit_real * sin + unit_imaginary * cos
         spectrum = torch.cat((magnitude * cos, magnitude * sin), dim=1)
-        out = F.conv_transpose1d(spectrum, self.neural_synthesis, stride=vc.hop)
+        out = F.conv_transpose1d(spectrum, self._kernel("neural", 2), stride=vc.hop)
         envelope = F.conv_transpose1d(torch.ones_like(magnitude[:, :1]), self.neural_envelope, stride=vc.hop)
         fft = vc.fft
         return (out / envelope)[:, 0, fft // 2:fft // 2 + total * vc.hop]
@@ -255,12 +276,12 @@ class Exportable(nn.Module):
         h = self.model.vocoder.head
         fft, hop, samples = h.fft, h.hop, wave.shape[1]
         padded = F.pad(wave[:, None], (fft // 2, fft))
-        real = F.conv1d(padded, self.head_analysis_real, stride=hop)                # [1, bins, frames]
-        imaginary = F.conv1d(padded, self.head_analysis_imaginary, stride=hop)
+        real = F.conv1d(padded, self._kernel("head", 0), stride=hop)                # [1, bins, frames]
+        imaginary = F.conv1d(padded, self._kernel("head", 1), stride=hop)
         index = torch.minimum(torch.arange(real.shape[-1], device=wave.device), total - 1)
         condition = hidden.index_select(1, index).transpose(1, 2)
         real, imaginary = h.correct(real, imaginary, condition, 1.0)
-        out = F.conv_transpose1d(torch.cat((real, imaginary), dim=1), self.head_synthesis, stride=hop)
+        out = F.conv_transpose1d(torch.cat((real, imaginary), dim=1), self._kernel("head", 2), stride=hop)
         envelope = F.conv_transpose1d(torch.ones_like(real[:, :1]), self.head_envelope, stride=hop)
         return (out / envelope)[:, 0, fft // 2:fft // 2 + samples]
 
@@ -270,8 +291,8 @@ class Exportable(nn.Module):
         p = self.model.vocoder.postfilter
         fft, hop, samples = p.fft, p.hop, wave.shape[1]
         padded = F.pad(wave[:, None], (fft // 2, fft))     # centring plus half a window of trailing zeros
-        real = F.conv1d(padded, self.synth_analysis_real, stride=hop)              # [1, bins, frames]
-        imaginary = F.conv1d(padded, self.synth_analysis_imaginary, stride=hop)
+        real = F.conv1d(padded, self._kernel("synth", 0), stride=hop)              # [1, bins, frames]
+        imaginary = F.conv1d(padded, self._kernel("synth", 1), stride=hop)
         magnitude = torch.sqrt(real * real + imaginary * imaginary + 1e-10)
         scale = (magnitude + 1e-4) ** (COMPRESSION - 1)
         index = torch.minimum(torch.div(torch.arange(real.shape[-1], device=wave.device), p.steps, rounding_mode="floor"),
@@ -283,11 +304,12 @@ class Exportable(nn.Module):
         correction = p.output(x)
         level = (magnitude + 1e-4) ** (1 - COMPRESSION)
         spectrum = torch.cat((real + correction[:, 0] * level, imaginary + correction[:, 1] * level), dim=1)
-        out = F.conv_transpose1d(spectrum, self.synth_synthesis, stride=hop)
+        out = F.conv_transpose1d(spectrum, self._kernel("synth", 2), stride=hop)
         envelope = F.conv_transpose1d(torch.ones_like(real[:, :1]), self.synth_envelope, stride=hop)
         return (out / envelope)[:, 0, fft // 2:fft // 2 + samples]
 
     def forward(self, tokens, stress, voice, speed, pitch_shift, pitch_range, *extra):
+        self._zero, self._kernels = (speed * 0).sum(), {}
         m = self.model
         c = m.config
         if self.emotional:
