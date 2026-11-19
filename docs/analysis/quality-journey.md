@@ -1214,3 +1214,16 @@ From now on decisions are made and recorded here, without waiting for approval.
   - Emotion mismatch: EM4 6.00 → 5.69, EF4 6.65 → 6.30.
   - Step 139k is the best balance (`runs/voice-six/inference-139000.pt`).
   - Blind test sent against the release (T files, key `texture-blind-key.json`).
+
+### 6.13 Round 11: tiny-voca-it-zs pilot data (19 November, 14:00)
+
+- **Generator:** `scripts/generate_voice_pool.py` builds 200 voices.
+  - Descriptions are drawn from gender × age × timbre × region × style.
+  - VoiceDesign speaks one reference sentence per voice (screened, WER ≤ 0.1,
+    up to 3 attempts); 193 of 200 passed on the first attempt.
+  - Base then clones each reference on 24 CML-TTS sentences, so each voice keeps
+    one timbre.
+- **Splits:** the last 20 voices are held out entirely to test unseen-voice
+  cloning; every 12th clip of the others goes to validation.
+- **Aim:** measure whether a small voice-fingerprint network can clone unseen
+  voices. Target speaker similarity ≥ 0.45 before scaling up.
