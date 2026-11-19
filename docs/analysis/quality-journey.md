@@ -1354,3 +1354,10 @@ From now on decisions are made and recorded here, without waiting for approval.
   - Fable bug fixes in code: per-clip fingerprint bank drawn per utterance (train = test conditions),
     one draw shared by both voice tables, noise is a total length (0.1 → cosine ≈ 0.995), fingerprints
     filled after checkpoint loading, training voices without a fingerprint now an error.
+- **Teacher check (Fable step 1): Qwen3-TTS Base clones the user zero-shot.** 10 new sentences per
+  reference, ECAPA vs the session NOT used as reference: 9 s clip → 0.628, 10 s clip from the second
+  session → 0.571 (same-session: 0.688 / 0.821). Accepted, rank 1 of 96 in every case. The teacher can
+  clone a real phone recording; our small model's zero-shot (0.16–0.19) and vector few-shot (0.30–0.35)
+  cannot. Fable's second review: the zero-shot base caps at 0.33 on real speakers, seen or unseen
+  (3.3 h of real speech, 95 speakers). Direction chosen by the user: zero-shot. Plan: distil it from
+  the teacher over thousands of cloned voices (see the roadmap entry).
