@@ -1,18 +1,18 @@
 {
- "updated": "2026-11-19 14:12 CET",
+ "updated": "2026-11-19 14:59 CET",
  "pill": "Large-model intelligibility at 6.8M parameters",
  "benchmark": {
   "ours": {
-   "wer": 0.5357826253348641,
+   "wer": 0.4975124378109453,
    "rtf": 0.045454545454545456
   },
   "kpis": [
    {
-    "value": "0.54%",
+    "value": "0.50%",
     "label": "WER, Whisper-large-v3"
    },
    {
-    "value": "0.33%",
+    "value": "0.32%",
     "label": "CER, Whisper-large-v3"
    },
    {
@@ -29,12 +29,12 @@
     "system": "tiny-voca-it (Lorenzo + Chiara)",
     "short": "tiny-voca-it",
     "params": "6.8M",
-    "wer": 0.5357826253348641,
+    "wer": 0.4975124378109453,
     "sim": null,
     "ours": true,
     "wer_ci": [
-     0.2,
-     0.96
+     0.18,
+     0.91
     ],
     "source": "measured, this repository (fixed voices, not cloning)"
    },
@@ -104,9 +104,9 @@
    }
   ],
   "notes": [
-   "WER by voice: Lorenzo 0.36%, Chiara 0.66%. Without the 11 lines that contain digits: 0.56% (lines with digits: 0.32%; numbers are read as words since 19 November, before: 1.93%). Previous model (IT1 + EF3): 0.80%.",
+   "WER by voice: Lorenzo 0.27%, Chiara 0.66%. Without the 11 lines that contain digits: 0.52% (lines with digits: 0.32%; numbers are read as words since 19 November, before: 0.32%). Previous version (v0.2.0 (voice-four 135k)): 0.54%.",
    "WER measures intelligibility only: every word understood. It says nothing about naturalness, intonation or the slight metallic trace, where the 0.6–2B models are clearly ahead; no paper reports an Italian listening (MOS) score on this set.",
-   "Our 95% interval (0.20–0.96%, bootstrap over the 100 lines, 2613 words) overlaps several systems: statistically the same band, not a clear first place. None of the 164 benchmark sentences is in our training texts.",
+   "Our 95% interval (0.18–0.91%, bootstrap over the 100 lines, 2613 words) overlaps several systems: statistically the same band, not a clear first place. None of the 164 benchmark sentences is in our training texts.",
    "Not an identical task: the other systems clone two Common Voice reference speakers zero-shot, which is harder than speaking in voices the model was trained on. Read the table as intelligibility at a given size, not as a ranking of voice cloning. SIM (similarity to the reference speaker) therefore does not apply to tiny-voca-it.",
    "Other systems are zero-shot cloning models of 0.6–2B+ parameters; their numbers are copied from the papers named in the table. Our normalisation: lower case, punctuation removed (seed-tts-eval style); papers may normalise slightly differently.",
    "Long lines are read sentence by sentence, as in the playground. Speed measured on one CPU thread, including the vocoder."
@@ -156,12 +156,6 @@
    "text": "Signal-processing tables computed in the graph (47 → 28 MB); the page now loads an int8 version of 8.6 MB with the same intelligibility. fp16 (14.6 MB) and int4 (5.9 MB) variants are also built."
   },
   {
-   "state": "next",
-   "title": "Voice model: intonation range and texture",
-   "when": "next",
-   "text": "Wider pitch range (now ~70% of real speech) and a noise-tolerant loss above 2 kHz."
-  },
-  {
    "state": "done",
    "title": "Numbers read the Italian way",
    "when": "19 Nov",
@@ -169,20 +163,20 @@
   },
   {
    "state": "done",
-   "title": "Release 0.2.0",
+   "title": "Releases 0.2.0 and 0.3.0",
    "when": "19 Nov",
-   "text": "Checkpoints, one-file ONNX, model card, samples and checksums on GitHub Releases (v0.2.0)."
+   "text": "Checkpoints, ONNX in four precisions (fp32 28 MB, fp16 15 MB, int8 9 MB, int4 6 MB), model card, samples and checksums on GitHub Releases."
+  },
+  {
+   "state": "done",
+   "title": "Clearer highs: texture loss above 2 kHz",
+   "when": "19 Nov",
+   "text": "A loss that asks for the recorded amount of high-band detail instead of its average: detail 0.88 → 0.93 (Lorenzo), 0.91 → 0.95 (Chiara); preferred blind on both voices. A 26% larger model gained only ~1% and was not adopted."
   },
   {
    "state": "now",
-   "title": "Clearer highs: a slightly larger voice model",
-   "when": "in progress",
-   "text": "Quality has plateaued at the model's size; a voice model about 30% larger (deeper acoustic stack, still under 9M in total) is trained from the release and kept only if it measures and sounds better."
-  },
-  {
-   "state": "next",
    "title": "tiny-voca-it-zs: zero-shot voice cloning",
-   "when": "final",
+   "when": "pilot running",
    "text": "A separate, bigger model (about 8–10M parameters) with its own neural voice-fingerprint network: record 15 seconds and speak in that voice instantly, in the browser, with no training. Trained on hundreds of Italian voices; tiny-voca-it stays the small two-voice model."
   }
  ]
