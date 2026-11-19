@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-19 14:59 CET",
+ "updated": "2026-11-19 18:56 CET",
  "pill": "Large-model intelligibility at 6.8M parameters",
  "benchmark": {
   "ours": {
@@ -174,10 +174,16 @@
    "text": "A loss that asks for the recorded amount of high-band detail instead of its average: detail 0.88 → 0.93 (Lorenzo), 0.91 → 0.95 (Chiara); preferred blind on both voices. A 26% larger model gained only ~1% and was not adopted."
   },
   {
+   "state": "next",
+   "title": "True streaming",
+   "when": "next",
+   "text": "Audio after a fixed ~100 ms instead of after the first sentence: chunked rendering with context (exact for the vocoder), then limited-lookahead attention, an AudioWorklet player, and clause-by-clause input for LLM text."
+  },
+  {
    "state": "now",
    "title": "tiny-voca-it-zs: zero-shot voice cloning",
    "when": "pilot running",
-   "text": "A separate, bigger model (about 8–10M parameters) with its own neural voice-fingerprint network: record 15 seconds and speak in that voice instantly, in the browser, with no training. Trained on hundreds of Italian voices; tiny-voca-it stays the small two-voice model."
+   "text": "Pilot: unseen synthetic voices cloned at 0.974 similarity (ceiling 0.981), but real voices not yet; now training on 136 real Italian speakers. Final: a separate model (about 8–10M parameters) with its own neural voice-fingerprint network: record 15 seconds and speak in that voice instantly, in the browser, with no training. Trained on hundreds of Italian voices; tiny-voca-it stays the small two-voice model."
   }
  ]
 }
