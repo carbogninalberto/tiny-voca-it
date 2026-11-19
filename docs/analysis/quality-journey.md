@@ -1281,3 +1281,16 @@ From now on decisions are made and recorded here, without waiting for approval.
     microphone and noise augmentation, so real recordings fall inside the
     training distribution. Measure it on held-out real speakers, then on the
     user's voice.
+
+### 6.14 Comparison with SmollerTTS (19 November, evening)
+
+- **SmollerTTS** (Dun Li Chan): 2.81M parameters, English, one speaker (LJSpeech, 22 h).
+  - Encoder: nearly identical to ours (4 attention + depthwise-conv blocks).
+  - Supervised durations, a convolution-only decoder to an 80-band mel, and a
+    frozen pretrained HiFi-GAN V2 (0.93M).
+  - Its own table puts the original tiny-voca (our base architecture) ahead:
+    UTMOS 4.33–4.43 vs 3.77, WER 0.26–0.39% vs 0.92%.
+- **Worth taking**, queued in `docs/research/backlog.md` after the zero-shot
+  work: a convolution-only acoustic stack (smaller, and exact chunked
+  streaming), a pronunciation-override dictionary, a Δmel loss at all
+  frequencies, and UTMOS as an automatic naturalness score.
