@@ -1121,3 +1121,21 @@ From now on decisions are made and recorded here, without waiting for approval.
     rounds and keeps the playground alive. Lesson: the round-8 watchdog exited
     with the round, and 30 minutes were lost after vocoder-four finished.
 - **Release 0.2.0 published (10:55)** at the user's request: GitHub Releases v0.2.0 (latest).
+
+### 6.10 Round 9: a deeper voice model (19 November, 10:30)
+
+- **Why:** the round-8 curves plateaued after about 6k steps, and IT1 with 11.4 h
+  plateaued at a similar error, which points to the model's capacity.
+- **Change:** acoustic stack 5 → 8 blocks (`configs/italian-voice-round-9.json`).
+  The voice model grows from 4.54M to 5.73M parameters, the total from 6.77M to
+  about 7.96M.
+- **Branch:** from the release weights (voice-four 135k with EMA weights in
+  `step-00135000-ema.pt`), using `--identity-new-blocks`. The new pre-norm
+  residual blocks start with zero output projections, so they pass input
+  through unchanged. Verified: after one step at lr 1e-9, the output differs
+  from the release by 2e-4 on a 0.55 peak. The first attempt differed by 0.36
+  because it started from the raw training weights, not the EMA weights.
+- **Training:** 20k steps on the round-8 data, scored every few thousand steps
+  against the release with vocoder-four.
+- **Kept only if** it is better on both voices (spectral error, locking, emotion
+  match) and in a blind test. It is about 26% larger and somewhat slower on CPU.

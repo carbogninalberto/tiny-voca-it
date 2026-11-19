@@ -534,6 +534,8 @@ def main():
                         help="embedding: only the voice rows; acoustic: voice rows + frame/prosody/acoustic/synthesis "
                         "(text encoder frozen); full: everything")
     parser.add_argument("--init-voice", help="Source voice whose rows initialise target voices that are new")
+    parser.add_argument("--identity-new-blocks", action="store_true",
+                        help="With --init-from into a deeper model: new residual blocks start as identity (output projections at zero)")
     parser.add_argument("--new-voice-init", nargs="*", default=[], metavar="NEW=SOURCE",
                         help="With --init-from: start an appended voice's speaker rows from an existing voice (e.g. EM4=EM1)")
     args = parser.parse_args()
@@ -673,6 +675,15 @@ def main():
         step = state["step"]
         loaded = load_compatible(system, state["system"])
         loaded["config_changes"] = sorted(differences)
+        if args.identity_new_blocks:
+            # Pre-norm residual blocks with zero output projections pass their input through unchanged, so a
+            # deeper branch starts exactly at the source model's function.
+            with torch.no_grad():
+                parameters = dict(system.named_parameters())
+                zeroed = [name for name in loaded["new"] if name.endswith(("attention.out.weight", "attention.out.bias", "project.weight", "project.bias"))]
+                for name in zeroed:
+                    parameters[name].zero_()
+            loaded["identity_blocks"] = zeroed
         if args.new_voice_init:
             # Appended voices start from a similar existing voice instead of a random row.
             with torch.no_grad():
