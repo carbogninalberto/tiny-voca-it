@@ -1311,3 +1311,28 @@ From now on decisions are made and recorded here, without waiting for approval.
     the voice model only 0.05 (Lorenzo) to 0.3 (Chiara).
   - The next naturalness work is after the voice model: a better vocoder,
     then bypassing the mel bottleneck (backlog item 3).
+- **Independent check with ECAPA (21:40), following the Fable 5.2 review.**
+  - SpeechBrain ECAPA-TDNN is a second speaker model, not the fingerprint
+    model. Calibrated on 136 VoxPopuli speakers: same-speaker median 0.774,
+    same-gender stranger median 0.27, EER threshold 0.538, EER 2.2%.
+  - The user's two clips score 0.892 (accepted, rank 1 of 96 male voices).
+  - **Clones of the user: pilot 0.185 and round 12 0.16. Rejected; the user's
+    clip ranks 35 and 46 of 96 for them.**
+  - The clones are indistinguishable from a random male voice, exactly as
+    heard. The WavLM "0.91" was an artefact: the fingerprint barely separates
+    same-gender voices (0.86–0.93 between different speakers).
+  - From now on, cloning is scored with ECAPA, same-gender impostors and rank.
+- **Fable 5.2 review of the zero-shot design.** Main points:
+  - the fingerprint barely separates same-gender voices;
+  - 276 voices are memorised (validation flat);
+  - the fingerprint is not centred or whitened;
+  - pitch is absolute rather than relative to the reference;
+  - the injection is weak.
+  - Bugs: fingerprint noise far too large (cosine 0.83 to the clean vector),
+    the checkpoint buffer overwrites newly supplied fingerprints, voice-mean
+    vs single-clip mismatch between train and test, gender-blind evaluation,
+    validation only on seen speakers.
+  - Plan: fix the evaluation (done: ECAPA), an oracle few-shot test on the
+    user's voice, fix the bugs, whiten the fingerprint and add explicit
+    pitch/spectrum descriptors, then 1–2k real speakers (all VoxPopuli plus
+    Common Voice Italian).
