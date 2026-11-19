@@ -444,19 +444,38 @@ class MelCorrection(nn.Module):
         return dsp_mel + self.mask * correction
 
 
+class FingerprintVoices(nn.Module):
+    """Voice vectors from a frozen voice fingerprint (e.g. a WavLM speaker-verification x-vector) through a
+    small learned projection, in place of one learned row per voice: a model trained this way can speak in
+    a voice it never saw, given that voice's fingerprint. ``fingerprints`` holds one per known voice (filled
+    from a file at training time); ``override`` [B, dim] replaces the lookup for unseen voices."""
+
+    def __init__(self, voices, dim, channels):
+        super().__init__()
+        self.register_buffer("fingerprints", torch.zeros(voices, dim))
+        self.project = nn.Sequential(nn.Linear(dim, 2 * channels), nn.GELU(), nn.Linear(2 * channels, channels))
+        self.override = None
+
+    def forward(self, speakers):
+        fingerprint = self.override if self.override is not None else self.fingerprints[speakers]
+        return self.project(fingerprint.to(self.fingerprints.dtype))
+
+
 class TinyVoca(nn.Module):
     def __init__(self, config=Config()):
         super().__init__()
         self.config = c = config
         self.tokens = nn.Embedding(c.vocab_size, c.channels, padding_idx=0)
         self.stress = nn.Embedding(3, c.channels)
-        self.voices = nn.Embedding(len(c.speakers), c.channels)
+        self.voices = (FingerprintVoices(len(c.speakers), c.speaker_embedding_dim, c.channels) if c.speaker_embedding_dim
+                       else nn.Embedding(len(c.speakers), c.channels))
         self.encoder = Stack(c, c.encoder_layers)
         # Outputs per token: log(1 + frames) and, for pause-capable tokens, a
         # "has frames at all" logit. A pause is absent more often than present, so
         # one regression would average both cases into a pause that is too short.
         self.duration = Predictor(c, 2)
-        self.frame_voices = nn.Embedding(len(c.speakers), c.channels)
+        self.frame_voices = (FingerprintVoices(len(c.speakers), c.speaker_embedding_dim, c.channels) if c.speaker_embedding_dim
+                             else nn.Embedding(len(c.speakers), c.channels))
         if c.emotions:
             # Scaled by intensity, so intensity 0 (and every unlabelled corpus) adds nothing.
             self.emotions = nn.Embedding(len(c.emotions), c.channels)

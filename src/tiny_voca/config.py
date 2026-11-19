@@ -16,7 +16,7 @@ BRANCHABLE_FIELDS = frozenset({"channels", "heads", "feedforward", "kernel", "en
                                "dropout", "predictor_channels", "speakers", "max_tokens", "max_frames", "max_parameters",
                                "excitation_jitter", "postfilter_channels", "postfilter_blocks",
                                "head_channels", "head_blocks", "vocos_mels",
-                               "vocos_mel_loss", "emotions", "unvoiced_pulse_gain"})
+                               "vocos_mel_loss", "emotions", "unvoiced_pulse_gain", "speaker_embedding_dim"})
 
 
 @dataclass(frozen=True)
@@ -65,6 +65,9 @@ class Config:
     # noise branch, as in real speech. Uses recorded voicing in training and the
     # predicted voicing at synthesis.
     unvoiced_pulse_gain: float = 1.0
+    # > 0: voices come from a frozen voice fingerprint of this size through a learned projection
+    # (zero-shot pilot, tiny-voca-it-zs) instead of one learned row per voice.
+    speaker_embedding_dim: int = 0
     # Learned spectral post-filter on the source-filter output (0 = none): 2D
     # ConvNeXt blocks over the (frequency, time) STFT of the synthesis predict a
     # complex correction per bin, for the phase spread and harmonic fine structure

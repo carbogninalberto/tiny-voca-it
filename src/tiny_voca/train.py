@@ -560,6 +560,8 @@ def main():
                         help="embedding: only the voice rows; acoustic: voice rows + frame/prosody/acoustic/synthesis "
                         "(text encoder frozen); full: everything")
     parser.add_argument("--init-voice", help="Source voice whose rows initialise target voices that are new")
+    parser.add_argument("--speaker-fingerprints", type=Path,
+                        help="Fingerprint-voice models (speaker_embedding_dim > 0): torch file {'fingerprints': {voice: vector}}")
     parser.add_argument("--identity-new-blocks", action="store_true",
                         help="With --init-from into a deeper model: new residual blocks start as identity (output projections at zero)")
     parser.add_argument("--new-voice-init", nargs="*", default=[], metavar="NEW=SOURCE",
@@ -677,6 +679,19 @@ def main():
         if not branch:
             raise ValueError("checkpoint was trained with a different model configuration (branch with --init-from)")
         return c.branch_differences(Config.from_dict(state["config"]))
+    if c.speaker_embedding_dim:
+        # Fingerprint voices: fill each known voice's frozen fingerprint (both voice tables) by name.
+        if not args.speaker_fingerprints:
+            parser.error("speaker_embedding_dim > 0 needs --speaker-fingerprints")
+        table = torch.load(args.speaker_fingerprints, map_location="cpu", weights_only=False)["fingerprints"]
+        missing = [v for v in c.speakers if v not in table]
+        if missing:
+            # Voices without a fingerprint (kept only for branch compatibility) get zeros; they must not be trained on.
+            print(json.dumps({"fingerprints_missing": len(missing), "examples": missing[:5]}), flush=True)
+        dim = c.speaker_embedding_dim
+        rows = torch.stack([table[v].float() if v in table else torch.zeros(dim) for v in c.speakers]).to(args.device)
+        for module in (system.model.voices, system.model.frame_voices):
+            module.fingerprints.copy_(rows)
     ema = EMA(system.model, args.ema_decay) if args.ema_decay is not None else None
     if args.resume:
         state = torch.load(args.resume, map_location=args.device, weights_only=True)
