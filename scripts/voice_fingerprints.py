@@ -34,10 +34,14 @@ def main():
     rows = [json.loads(l) for l in (a.root / "manifest.jsonl").read_text().splitlines()]
     fingerprints, clips = {}, {}
     for v, info in voices.items():
+        own = [r for r in rows if r["voice_id"] == v]
         ref = a.root / "refs" / f"{v}.wav"
         if not ref.exists():
-            continue
-        own = [r for r in rows if r["voice_id"] == v]
+            # Corpora without a separate reference clip (real speakers): the first clip plays that role, and the
+            # held-out voice's other clips are what the clone is compared with.
+            if not own:
+                continue
+            ref, own = a.root / own[0]["audio"], own[1:]
         if info["held_out"]:
             fingerprints[v] = embed(ref)
             clips[v] = torch.stack([embed(a.root / r["audio"]) for r in own]) if own else None

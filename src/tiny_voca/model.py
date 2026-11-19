@@ -455,10 +455,14 @@ class FingerprintVoices(nn.Module):
         self.register_buffer("fingerprints", torch.zeros(voices, dim))
         self.project = nn.Sequential(nn.Linear(dim, 2 * channels), nn.GELU(), nn.Linear(2 * channels, channels))
         self.override = None
+        self.noise = 0.0        # training only: perturbation of the unit-length fingerprint (robustness to real clips)
 
     def forward(self, speakers):
         fingerprint = self.override if self.override is not None else self.fingerprints[speakers]
-        return self.project(fingerprint.to(self.fingerprints.dtype))
+        fingerprint = fingerprint.to(self.fingerprints.dtype)
+        if self.training and self.noise > 0:
+            fingerprint = F.normalize(fingerprint + self.noise * torch.randn_like(fingerprint), dim=-1)
+        return self.project(fingerprint)
 
 
 class TinyVoca(nn.Module):

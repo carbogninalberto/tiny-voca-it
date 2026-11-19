@@ -562,6 +562,8 @@ def main():
     parser.add_argument("--init-voice", help="Source voice whose rows initialise target voices that are new")
     parser.add_argument("--speaker-fingerprints", type=Path,
                         help="Fingerprint-voice models (speaker_embedding_dim > 0): torch file {'fingerprints': {voice: vector}}")
+    parser.add_argument("--fingerprint-noise", type=float, default=0.0,
+                        help="Fingerprint-voice models: noise added to each unit-length fingerprint during training (e.g. 0.03)")
     parser.add_argument("--identity-new-blocks", action="store_true",
                         help="With --init-from into a deeper model: new residual blocks start as identity (output projections at zero)")
     parser.add_argument("--new-voice-init", nargs="*", default=[], metavar="NEW=SOURCE",
@@ -692,6 +694,7 @@ def main():
         rows = torch.stack([table[v].float() if v in table else torch.zeros(dim) for v in c.speakers]).to(args.device)
         for module in (system.model.voices, system.model.frame_voices):
             module.fingerprints.copy_(rows)
+            module.noise = args.fingerprint_noise
     ema = EMA(system.model, args.ema_decay) if args.ema_decay is not None else None
     if args.resume:
         state = torch.load(args.resume, map_location=args.device, weights_only=True)
