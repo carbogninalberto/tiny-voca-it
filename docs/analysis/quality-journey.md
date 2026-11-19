@@ -1240,3 +1240,19 @@ From now on decisions are made and recorded here, without waiting for approval.
   - Scored with Whisper-large-v3 on CPU int8 because the GPU was busy; v0.2.0
     used GPU fp16. The v0.2.0 files are kept in
     `docs/benchmarks/minimax-it/v0.2.0/`.
+- **Zero-shot preview page (16:55), at the user's request:**
+  <https://carbogninalberto.github.io/tiny-voca-it/zs.html>, linked from the main
+  page.
+  - Pick one of the 20 held-out voices (with its reference clip) or 10 training
+    voices, or record or upload your own clip.
+  - The fingerprint is computed in the browser by WavLM-base-plus-sv exported
+    to ONNX: 4-bit MatMul plus fp16 storage, 88 MB, cosine ≥ 0.996 to
+    PyTorch. Cached after the first use; nothing is uploaded.
+  - TTS: the pilot exported with a `fingerprint` input, 9.1 MB (int8 MatMul +
+    fp16). Published with the step-142k checkpoint; refreshed when training
+    ends.
+  - Tested headless: an unseen voice and an uploaded clip both synthesise. The
+    main page's model list ignores the hidden zs entries.
+  - ONNX vs PyTorch: waveform drift from phase accumulation, as in the release
+    model (relative RMS 0.24 vs 0.42 for the release); spectrally close
+    (log-mel L1 0.17 vs 0.10).
