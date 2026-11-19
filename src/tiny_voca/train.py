@@ -80,7 +80,7 @@ class TrainingSystem(nn.Module):
         self.spectral = SpectralLoss(config.sample_rate)
         self.vocos_mel = VocosMel(bands=config.vocos_mels or 100) if config.vocos_mels or config.vocos_mel_loss else None
 
-    def objective(self, batch, teacher_probability, weights=WEIGHTS, random_phase=True):
+    def objective(self, batch, teacher_probability, weights=WEIGHTS, random_phase=True, pitch_delta=0.0):
         """Loss on full utterances. Returns ``(loss, terms, auxiliary)``.
 
         ``teacher_probability`` is the per-utterance chance that the acoustic
@@ -126,6 +126,13 @@ class TrainingSystem(nn.Module):
         terms = dict(duration=duration, pause=pause, pitch=pitch, pitch_spread=pitch_spread, voicing=voicing, energy=energy,
                      mel_head=mel_head, stft=stft, mel=mel)
         loss = sum(weights[name] * value for name, value in terms.items())
+        # Frame-to-frame pitch change against the recording's, on trusted voiced frame pairs. The spread
+        # loss alone can be met by frame-level wiggle (heard as a tremble); this asks for the recorded
+        # movement instead. Always measured; weighted only when the recipe sets ``pitch_delta``.
+        pair = sung[:, 1:] * sung[:, :-1]
+        terms["pitch_delta"] = masked_mean(((prediction[:, 1:, 0] - prediction[:, :-1, 0]) - (target[:, 1:, 0] - target[:, :-1, 0])).abs(), pair)
+        if pitch_delta:
+            loss = loss + pitch_delta * terms["pitch_delta"]
         if c.vocos_mel_loss:
             frames_vocos = self.vocos_mel(batch["wave"]).shape[1]
             vocos_mask = torch.arange(frames_vocos, device=lengths.device)[None] <= lengths[:, None]
@@ -168,7 +175,7 @@ def crops(fake, real, lengths, size, count):
 SCHEDULES = ("half_life", "cosine")
 # Recipe fields added after format 4. A run recorded without them used these
 # values, so resuming it compares equal and behaves exactly as before.
-RECIPE_DEFAULTS = {"schedule": "half_life", "lr_floor": 0.0, "ema_decay": None, "total_steps": None, "mel_critic": False}
+RECIPE_DEFAULTS = {"schedule": "half_life", "lr_floor": 0.0, "ema_decay": None, "total_steps": None, "mel_critic": False, "pitch_delta": 0.0}
 
 
 def learning_rate(step, base, warmup, half_life, start=0, schedule="half_life", total=None, floor=0.0):
@@ -252,7 +259,7 @@ def optimize_step(system, critics, optimizer, critic_optimizer, batch, step, rec
         group["lr"] = learning_rate(step, recipe["learning_rate"], 1, recipe["lr_half_life"], start, **schedule)
     optimizer.zero_grad(set_to_none=True)
     probability = teacher_probability(step, recipe["teacher_hold"], recipe["teacher_ramp"], recipe["teacher_final"])
-    loss, metrics, auxiliary = system.objective(batch, probability, weights)
+    loss, metrics, auxiliary = system.objective(batch, probability, weights, pitch_delta=recipe.get("pitch_delta", 0.0))
     if step >= recipe["gan_start"]:
         wave = auxiliary["wave"]
         fake, real, index = crops(wave, batch["wave"], batch["frame_lengths"] * system.model.config.hop, recipe["crop_samples"], recipe["crops"])
@@ -457,7 +464,7 @@ def validate(system, dataset, indices, device, weights=WEIGHTS, batch_size=8, fr
             totals[f"validation_{name}_stft"] += float(metrics["stft"]) * size
             if "vocoder_input" in metrics:
                 totals[f"validation_{name}_vocoder_input"] += float(metrics["vocoder_input"]) * size
-        for key in ("duration", "pause_accuracy", "pause_length_ratio", "pitch_error_semitones", "pitch_spread_ratio", "voicing_accuracy",
+        for key in ("duration", "pause_accuracy", "pause_length_ratio", "pitch_error_semitones", "pitch_spread_ratio", "pitch_delta", "voicing_accuracy",
                     "duration_length_ratio", "duration_length_error"):
             totals["validation_" + key] += float(metrics[key]) * size
         weight += size
@@ -492,6 +499,7 @@ def main():
     parser.add_argument("--gan-scale-max", type=float, default=2000.0)
     parser.add_argument("--crop-samples", type=int, default=8192)
     parser.add_argument("--mel-critic", action="store_true", help="Add a critic on the Vocos log-mel above 1 kHz (what the neural vocoder reads)")
+    parser.add_argument("--pitch-delta", type=float, default=0.0, help="Weight of the frame-to-frame pitch-change loss (against tremble; 0 = off)")
     parser.add_argument("--crops", type=int, default=2, help="Discriminator windows per utterance")
     parser.add_argument("--teacher-hold", type=int, default=3000, help="Steps with recorded prosody conditioning only")
     parser.add_argument("--teacher-ramp", type=int, default=7000)
@@ -614,6 +622,8 @@ def main():
     recipe["voiced_vowel_targets"] = not args.recorded_voicing
     if args.mel_critic:
         recipe["mel_critic"] = True
+    if args.pitch_delta:
+        recipe["pitch_delta"] = args.pitch_delta
     recipe["weights"] = {**WEIGHTS, **{key: float(value) for key, value in args.weights.items()}}
     recipe["branched_from"] = None
     recipe["adaptation"] = adaptation

@@ -1053,3 +1053,13 @@ From now on decisions are made and recorded here, without waiting for approval.
   - Lesson: test speedups with the production settings (memory cap,
     allocator). The first uncapped test spilled into shared memory and looked
     like a hang.
+- **Numbers as words (02:45):**
+  - `tiny_voca.italian_numbers` (Python) and `playground/web/numbers.js`
+    (browser) expand numbers before phonemisation: cardinals with Italian
+    elisions, decimals, %, € $ £ amounts, times, dates, ordinals, signs, and
+    long digit strings read digit by digit.
+  - The two use ASCII regex semantics so they behave identically.
+    `tests/test_numbers.py` checks parity through node.
+  - The step sits outside the front-end identity, so checkpoints are unaffected.
+  - Live on Pages for the current model. The benchmark's 11 digit lines (1.93%
+    WER) will be re-measured with the round-8 model.

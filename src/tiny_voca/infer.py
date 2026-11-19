@@ -54,6 +54,10 @@ def match_frontend(path):
 def speak(model, text, voice, speed=1.0, pitch_shift=0.0, seed=0, pitch_range=1.0, emotion=None, intensity=0.0):
     """Text -> (float waveform tensor, phonemized text). Same front end as training."""
     device = next(model.parameters()).device
+    if getattr(model.config, "language", "en") == "it":
+        # Numbers, times, dates, amounts to words (outside the front-end identity; see italian_numbers).
+        from .italian_numbers import expand_numbers
+        text = expand_numbers(text)
     phones = phonemize(text, model.config.profile)
     if len(phones) > model.config.max_tokens:
         raise ValueError("text is too long for one utterance; split it into sentences")

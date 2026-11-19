@@ -6,6 +6,7 @@
 import * as ort from "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.wasm.min.mjs";
 import ESpeakNg from "./espeak-ng/espeak-ng.js";
 import { ItalianFrontend } from "./frontend.js";
+import { expandNumbers } from "./numbers.js";
 
 const VERSION = "2";   // bump when files under models/ or espeak-ng/ change
 ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/";
@@ -116,7 +117,8 @@ const cancelled = new Set();
 
 async function speak(request) {
   const started = performance.now();
-  const list = sentences(request.text);
+  // Numbers, times, dates and amounts to words first (same rules as tiny_voca.italian_numbers).
+  const list = sentences(expandNumbers(request.text));
   if (!list.length) throw new Error("Scrivi un testo / type some text");
   const rate = current.metadata.sample_rate;
   const pause = new Float32Array(Math.round(0.25 * rate));
