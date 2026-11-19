@@ -1294,3 +1294,10 @@ From now on decisions are made and recorded here, without waiting for approval.
   work: a convolution-only acoustic stack (smaller, and exact chunked
   streaming), a pronunciation-override dictionary, a Δmel loss at all
   frequencies, and UTMOS as an automatic naturalness score.
+- **UTMOS (naturalness) for 0.3.0:**
+  - 3.34 on the MiniMax Italian sentences (Lorenzo 3.42, Chiara 3.27).
+  - The training data of the same voices scores 4.05 and 4.20, and real
+    VoxPopuli speech 2.31.
+  - UTMOS is not biased against clean Italian. **The remaining gap to the
+    targets (0.6–0.9) is the main quality headroom**; WER is already 0.50%.
+  - UTMOS becomes a standing metric next to WER, detail and locking.

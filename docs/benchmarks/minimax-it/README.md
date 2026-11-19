@@ -38,3 +38,18 @@ The Italian split of [MiniMaxAI/TTS-Multilingual-Test-Set](https://huggingface.c
 zero-shot, which is harder than speaking in voices the model was trained on. Read the table as
 intelligibility at a given size, not as a ranking of cloning quality. For the same reason, SIM does not
 apply to tiny-voca-it.
+
+## Naturalness: UTMOS
+
+UTMOS22 "strong" (an automatic MOS predictor, 1–5; trained on English listeners) on the same 100 sentences:
+**3.34** (Lorenzo 3.42, Chiara 3.27).
+
+| Calibration (40 clips each) | UTMOS |
+|---|---|
+| Chiara's training data (Qwen3-TTS) | 4.20 |
+| Lorenzo's training data (Qwen3-TTS) | 4.05 |
+| real Italian, VoxPopuli (parliament microphones) | 2.31 |
+
+Clean Italian scores like good English TTS, so the predictor is not simply biased against Italian. The model
+is 0.6–0.9 points below the voices it learned from: intelligibility is excellent, naturalness has room left.
+For reference, SmollerTTS reports 3.77 and the original English tiny-voca 4.33–4.43 (English, different sentences).

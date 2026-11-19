@@ -34,5 +34,18 @@
   "wer": 0.5357826253348641,
   "cer": 0.3303536727555383,
   "wer_lines_with_digits": 0.3215434083601286
+ },
+ "utmos": {
+  "predictor": "UTMOS22 strong (tarepan/SpeechMOS v1.2.0), 16 kHz",
+  "mean": 3.342,
+  "by_voice": {
+   "EM4": 3.419,
+   "EF4": 3.265
+  },
+  "calibration": {
+   "Lorenzo training data (Qwen3-TTS clone, 40 clips)": 4.05,
+   "Chiara training data (Qwen3-TTS clone, 40 clips)": 4.201,
+   "real Italian, VoxPopuli test (40 clips)": 2.308
+  }
  }
 }
