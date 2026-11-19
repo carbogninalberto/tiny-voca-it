@@ -1256,3 +1256,28 @@ From now on decisions are made and recorded here, without waiting for approval.
   - ONNX vs PyTorch: waveform drift from phase accumulation, as in the release
     model (relative RMS 0.24 vs 0.42 for the release); spectrally close
     (log-mel L1 0.17 vs 0.10).
+- **Zero-shot pilot, stage A result (17:37):**
+  - WavLM-SV cosine of the synthetic output to the target voice's real clips,
+    with each fingerprint taken from one ~7 s reference.
+
+    | | own voice | other voices (chance) | real-clip ceiling |
+    |---|---|---|---|
+    | unseen voices (20) | **0.974** | 0.697 | 0.981 |
+    | seen voices (8) | 0.967 | 0.676 | 0.983 |
+
+  - Within the training distribution (Qwen3-designed, studio-clean voices), a
+    4.5M model conditioned on a frozen fingerprint clones unseen voices close
+    to the ceiling.
+  - **But it does not clone the user's real voice** (reported from the preview
+    page). Probable cause: domain gap. All 180 training voices come from one
+    generator, so a real voice through a real microphone gives a fingerprint
+    outside the training distribution, and the projection does not
+    extrapolate. Caveat: the same WavLM model gives the fingerprint and
+    measures similarity, which favours the metric.
+  - The final pilot model (154k) is published on zs.html.
+  - **Next (stage A2):** train on hundreds of *real* Italian speakers (public
+    corpora: CML-TTS Italian, Multilingual LibriSpeech Italian, VoxPopuli
+    Italian), with fingerprints from single clips (not voice means) and
+    microphone and noise augmentation, so real recordings fall inside the
+    training distribution. Measure it on held-out real speakers, then on the
+    user's voice.
