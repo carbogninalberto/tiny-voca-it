@@ -1,13 +1,54 @@
 [
  {
-  "id": "preview",
-  "file": "tiny-voca-it-preview",
-  "label": "Lorenzo + Chiara · updated 2026-11-19 12:04",
+  "id": "preview-int8",
+  "file": "tiny-voca-it-preview-int8",
+  "label": "Lorenzo + Chiara · int8 (int8 weights, 8.6 MB) · updated 2026-11-19 13:36",
   "voice": "EM4",
   "voices": [
    "EM4",
    "EF4"
   ],
+  "precision": "int8",
+  "megabytes": 8.6,
   "hash": "3da44dc133bef72b"
+ },
+ {
+  "id": "preview-fp16",
+  "file": "tiny-voca-it-preview-fp16",
+  "label": "Lorenzo + Chiara · fp16 (fp16 weights, 14.6 MB) · updated 2026-11-19 13:36",
+  "voice": "EM4",
+  "voices": [
+   "EM4",
+   "EF4"
+  ],
+  "precision": "fp16",
+  "megabytes": 14.6,
+  "hash": "ebcbf1f84896cd80"
+ },
+ {
+  "id": "preview-fp32",
+  "file": "tiny-voca-it-preview-fp32",
+  "label": "Lorenzo + Chiara · fp32 (full precision, 28.0 MB) · updated 2026-11-19 13:36",
+  "voice": "EM4",
+  "voices": [
+   "EM4",
+   "EF4"
+  ],
+  "precision": "fp32",
+  "megabytes": 28.0,
+  "hash": "cdbc8aae8cf9547b"
+ },
+ {
+  "id": "preview-int4",
+  "file": "tiny-voca-it-preview-int4",
+  "label": "Lorenzo + Chiara · int4 (4-bit weights, 5.9 MB) · updated 2026-11-19 13:36",
+  "voice": "EM4",
+  "voices": [
+   "EM4",
+   "EF4"
+  ],
+  "precision": "int4",
+  "megabytes": 5.9,
+  "hash": "80fbfeebae870927"
  }
 ]
