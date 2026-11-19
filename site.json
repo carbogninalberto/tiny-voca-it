@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-19 10:25 CET",
+ "updated": "2026-11-19 12:27 CET",
  "pill": "Large-model intelligibility at 6.8M parameters",
  "benchmark": {
   "ours": {
@@ -148,6 +148,12 @@
    "title": "New voices Lorenzo and Chiara, much stronger emotions",
    "when": "19 Nov",
    "text": "Two designed voices with 5 h of speech each, 150 emotion-congruent sentences per emotion (5× more), a voice-similarity filter, and a pitch-change loss against tremble. Data generation now ~2.4× faster (CUDA graphs)."
+  },
+  {
+   "state": "done",
+   "title": "Smaller downloads: lean and quantized ONNX",
+   "when": "19 Nov",
+   "text": "Signal-processing tables computed in the graph (47 → 28 MB); the page now loads an int8 version of 8.6 MB with the same intelligibility. fp16 (14.6 MB) and int4 (5.9 MB) variants are also built."
   },
   {
    "state": "next",
