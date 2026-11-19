@@ -31,7 +31,8 @@ ROADMAP = [
     {"state": "done", "title": "Numbers read the Italian way", "when": "19 Nov", "text": "Cardinals, decimals, percentages, euro amounts, times, dates and ordinals become words before phonemisation, identically in Python and in the browser."},
     {"state": "done", "title": "Releases 0.2.0 and 0.3.0", "when": "19 Nov", "text": "Checkpoints, ONNX in four precisions (fp32 28 MB, fp16 15 MB, int8 9 MB, int4 6 MB), model card, samples and checksums on GitHub Releases."},
     {"state": "done", "title": "Clearer highs: texture loss above 2 kHz", "when": "19 Nov", "text": "A loss that asks for the recorded amount of high-band detail instead of its average: detail 0.88 → 0.93 (Lorenzo), 0.91 → 0.95 (Chiara); preferred blind on both voices. A 26% larger model gained only ~1% and was not adopted."},
-    {"state": "now", "title": "tiny-voca-it-zs: zero-shot voice cloning", "when": "pilot running", "text": "A separate, bigger model (about 8–10M parameters) with its own neural voice-fingerprint network: "
+    {"state": "next", "title": "True streaming", "when": "next", "text": "Audio after a fixed ~100 ms instead of after the first sentence: chunked rendering with context (exact for the vocoder), then limited-lookahead attention, an AudioWorklet player, and clause-by-clause input for LLM text."},
+    {"state": "now", "title": "tiny-voca-it-zs: zero-shot voice cloning", "when": "pilot running", "text": "Pilot: unseen synthetic voices cloned at 0.974 similarity (ceiling 0.981), but real voices not yet; now training on 136 real Italian speakers. Final: a separate model (about 8–10M parameters) with its own neural voice-fingerprint network: "
      "record 15 seconds and speak in that voice instantly, in the browser, with no training. Trained on hundreds of Italian voices; "
      "tiny-voca-it stays the small two-voice model."},
 ]
