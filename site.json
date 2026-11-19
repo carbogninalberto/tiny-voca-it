@@ -1,18 +1,18 @@
 {
- "updated": "2026-11-19 10:09 CET",
+ "updated": "2026-11-19 10:17 CET",
  "pill": "Large-model intelligibility at 6.8M parameters",
  "benchmark": {
   "ours": {
-   "wer": 0.8036739380022963,
+   "wer": 0.5357826253348641,
    "rtf": 0.045454545454545456
   },
   "kpis": [
    {
-    "value": "0.80%",
+    "value": "0.54%",
     "label": "WER, Whisper-large-v3"
    },
    {
-    "value": "0.51%",
+    "value": "0.33%",
     "label": "CER, Whisper-large-v3"
    },
    {
@@ -26,15 +26,15 @@
   ],
   "rows": [
    {
-    "system": "tiny-voca-it (IT1 + EF3)",
+    "system": "tiny-voca-it (Lorenzo + Chiara)",
     "short": "tiny-voca-it",
     "params": "6.8M",
-    "wer": 0.8036739380022963,
+    "wer": 0.5357826253348641,
     "sim": null,
     "ours": true,
     "wer_ci": [
-     0.37,
-     1.35
+     0.2,
+     0.96
     ],
     "source": "measured, this repository (fixed voices, not cloning)"
    },
@@ -104,9 +104,9 @@
    }
   ],
   "notes": [
-   "WER by voice: IT1 1.00%, EF3 0.66%. Without the 11 lines that contain digits: 0.65% (lines with digits: 1.9%; our text normalisation does not expand numbers yet).",
+   "WER by voice: Lorenzo 0.36%, Chiara 0.66%. Without the 11 lines that contain digits: 0.56% (lines with digits: 0.32%; numbers are read as words since 19 November, before: 1.93%). Previous model (IT1 + EF3): 0.80%.",
    "WER measures intelligibility only: every word understood. It says nothing about naturalness, intonation or the slight metallic trace, where the 0.6–2B models are clearly ahead; no paper reports an Italian listening (MOS) score on this set.",
-   "Our 95% interval (0.37–1.35%, bootstrap over the 100 lines, 2613 words) overlaps several systems: statistically the same band, not a clear first place. None of the 164 benchmark sentences is in our training texts.",
+   "Our 95% interval (0.20–0.96%, bootstrap over the 100 lines, 2613 words) overlaps several systems: statistically the same band, not a clear first place. None of the 164 benchmark sentences is in our training texts.",
    "Not an identical task: the other systems clone two Common Voice reference speakers zero-shot, which is harder than speaking in voices the model was trained on. Read the table as intelligibility at a given size, not as a ranking of voice cloning. SIM (similarity to the reference speaker) therefore does not apply to tiny-voca-it.",
    "Other systems are zero-shot cloning models of 0.6–2B+ parameters; their numbers are copied from the papers named in the table. Our normalisation: lower case, punctuation removed (seed-tts-eval style); papers may normalise slightly differently.",
    "Long lines are read sentence by sentence, as in the playground. Speed measured on one CPU thread, including the vocoder."
