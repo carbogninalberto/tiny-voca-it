@@ -49,6 +49,21 @@ def main():
     onnx = export(model, out / "tiny-voca-it.onnx", vocoder=vocoder)
     meta = metadata(model, a.voice, a.vocoder); meta["product_voices"] = names
     (out / "tiny-voca-it.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1))
+    # Smaller variants of the same graph (decision log 6.11): fp16 weights, int8 (MatMul, web-compatible), int4.
+    import onnx as onnx_lib
+    from onnxruntime.quantization import QuantType, quantize_dynamic
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from quantize_onnx import fp16_weights
+    onnx_lib.save(fp16_weights(onnx_lib.load(onnx)), out / "tiny-voca-it-fp16.onnx")
+    quantize_dynamic(str(onnx), str(out / "tiny-voca-it-int8.onnx"), weight_type=QuantType.QInt8, op_types_to_quantize=["MatMul"],
+                     extra_options={"MatMulConstBOnly": True})
+    onnx_lib.save(fp16_weights(onnx_lib.load(out / "tiny-voca-it-int8.onnx")), out / "tiny-voca-it-int8.onnx")
+    try:
+        from onnxruntime.quantization.matmul_nbits_quantizer import DefaultWeightOnlyQuantConfig, MatMulNBitsQuantizer
+        quantizer = MatMulNBitsQuantizer(onnx_lib.load(onnx), algo_config=DefaultWeightOnlyQuantConfig(block_size=32, is_symmetric=True, bits=4))
+        quantizer.process(); onnx_lib.save(fp16_weights(quantizer.model.model), out / "tiny-voca-it-int4.onnx")
+    except Exception as error:
+        print(f"int4 skipped: {error}", file=sys.stderr)
     # Samples (16-bit WAV, -20 LUFS-ish RMS), one per voice and sentence, plus emotions.
     streamer = Streamer(a.voice, a.vocoder)
     samples = out / "samples"; samples.mkdir(exist_ok=True)
@@ -79,7 +94,8 @@ audio as synthetic. Emotions: {", ".join(model.config.emotions)} (intensity 0-1.
 | file | what |
 |---|---|
 | `tiny-voca-it-voice.pt`, `tiny-voca-it-vocoder.pt` | PyTorch checkpoints (`python -m tiny_voca.infer --checkpoint ... --vocoder ...`) |
-| `tiny-voca-it.onnx` + `tiny-voca-it.json` | one ONNX graph (voice model + vocoder) and its front-end metadata; runs in ONNX Runtime and ONNX Runtime Web |
+| `tiny-voca-it.onnx` + `tiny-voca-it.json` | one ONNX graph (voice model + vocoder, full precision) and its front-end metadata; runs in ONNX Runtime and ONNX Runtime Web |
+| `tiny-voca-it-int8.onnx`, `-fp16.onnx`, `-int4.onnx` | the same graph with int8 (MatMul), fp16 or 4-bit weights; same metadata file. Sizes and quality in the repository's decision log |
 | `samples/` | example audio per voice (and emotion) |
 | `SHA256SUMS` | checksums |
 

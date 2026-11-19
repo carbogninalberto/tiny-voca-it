@@ -7,7 +7,7 @@
 cd "$(dirname "$0")/.."
 ev(){ echo "$(date '+%m-%d %H:%M') $*" >> logs/events.log; }
 declare -A seen; high=0
-tb(){ cat logs/*.log 2>/dev/null | grep -c Traceback; }
+tb(){ ls logs/*.log | grep -v -E "events.log|watchdog.log|playground.log" | xargs cat 2>/dev/null | grep -c Traceback; }
 tbs=$(tb)
 while true; do
   for f in logs/round*.log; do
