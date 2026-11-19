@@ -1207,3 +1207,10 @@ From now on decisions are made and recorded here, without waiting for approval.
   - A ~2000-character long text (2,112 characters, 27 sentences): 157 s of
     audio, first audio after 0.75 s, all in 21 s.
   - The default sentence no longer starts with "Buongiorno!".
+- **Round 10 result (14:10):**
+  - Validation, model spectrograms through vocoder-four at g=0.05. Detail above
+    1 kHz (real = 1): EM4 0.88 → 0.93, EF4 0.91 → 0.95.
+  - Mel error: EM4 0.545 → 0.552, EF4 0.597 → 0.597. Locking unchanged.
+  - Emotion mismatch: EM4 6.00 → 5.69, EF4 6.65 → 6.30.
+  - Step 139k is the best balance (`runs/voice-six/inference-139000.pt`).
+  - Blind test sent against the release (T files, key `texture-blind-key.json`).
