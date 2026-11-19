@@ -32,7 +32,7 @@ def main():
 
     voices = json.loads((a.root / "voices.json").read_text())
     rows = [json.loads(l) for l in (a.root / "manifest.jsonl").read_text().splitlines()]
-    fingerprints, clips = {}, {}
+    fingerprints, clips, bank = {}, {}, {}
     for v, info in voices.items():
         own = [r for r in rows if r["voice_id"] == v]
         ref = a.root / "refs" / f"{v}.wav"
@@ -48,7 +48,8 @@ def main():
         else:
             vectors = [embed(a.root / r["audio"]) for r in own[:a.clips]] or [embed(ref)]
             fingerprints[v] = torch.nn.functional.normalize(torch.stack(vectors).mean(0), dim=-1)
-    torch.save({"fingerprints": fingerprints, "held_out_clips": clips, "model": "microsoft/wavlm-base-plus-sv"}, a.output)
+            bank[v] = torch.stack(vectors)        # single-clip fingerprints: drawn per utterance in training
+    torch.save({"fingerprints": fingerprints, "clips": bank, "held_out_clips": clips, "model": "microsoft/wavlm-base-plus-sv"}, a.output)
     print(json.dumps({"voices": len(fingerprints), "held_out": sum(1 for v in clips)}))
 
 

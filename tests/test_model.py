@@ -655,5 +655,25 @@ class EmotionSpeedTests(unittest.TestCase):
         self.assertEqual(int(exported.sum()), frames(1.0))
 
 
+class FingerprintVoiceTests(unittest.TestCase):
+    def test_bank_shared_draw_and_noise(self):
+        from tiny_voca.config import Config
+        from tiny_voca.model import TinyVoca
+        torch.manual_seed(0)
+        m = TinyVoca(Config(speaker_embedding_dim=16, max_parameters=6_000_000))
+        f = torch.nn.functional.normalize(torch.randn(len(m.config.speakers), 16), dim=-1)
+        bank = torch.nn.functional.normalize(torch.randn(len(m.config.speakers), 3, 16), dim=-1)
+        for module in (m.voices, m.frame_voices):
+            module.fingerprints.copy_(f); module.bank = bank; module.bank_count = torch.full((len(f),), 3); module.noise = 0.1
+        speakers = torch.tensor([0, 1])
+        m.train()
+        a, b = m.voices.draw(speakers), m.frame_voices.draw(speakers)
+        self.assertTrue(torch.equal(a, b))                               # one draw shared by both tables
+        best = max(float(torch.nn.functional.cosine_similarity(a[0], bank[0, k], dim=0)) for k in range(3))
+        self.assertGreater(best, 0.98)                                   # a bank clip, lightly perturbed
+        m.eval()
+        self.assertTrue(torch.equal(m.voices.draw(speakers), f[speakers]))   # inference: the mean
+
+
 if __name__ == "__main__":
     unittest.main()

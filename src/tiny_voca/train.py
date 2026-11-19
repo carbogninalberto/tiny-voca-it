@@ -563,7 +563,7 @@ def main():
     parser.add_argument("--speaker-fingerprints", type=Path,
                         help="Fingerprint-voice models (speaker_embedding_dim > 0): torch file {'fingerprints': {voice: vector}}")
     parser.add_argument("--fingerprint-noise", type=float, default=0.0,
-                        help="Fingerprint-voice models: noise added to each unit-length fingerprint during training (e.g. 0.03)")
+                        help="Fingerprint-voice models: total length of a random perturbation of the unit fingerprint during training (0.1 keeps cosine ~0.995)")
     parser.add_argument("--identity-new-blocks", action="store_true",
                         help="With --init-from into a deeper model: new residual blocks start as identity (output projections at zero)")
     parser.add_argument("--new-voice-init", nargs="*", default=[], metavar="NEW=SOURCE",
@@ -681,20 +681,8 @@ def main():
         if not branch:
             raise ValueError("checkpoint was trained with a different model configuration (branch with --init-from)")
         return c.branch_differences(Config.from_dict(state["config"]))
-    if c.speaker_embedding_dim:
-        # Fingerprint voices: fill each known voice's frozen fingerprint (both voice tables) by name.
-        if not args.speaker_fingerprints:
-            parser.error("speaker_embedding_dim > 0 needs --speaker-fingerprints")
-        table = torch.load(args.speaker_fingerprints, map_location="cpu", weights_only=False)["fingerprints"]
-        missing = [v for v in c.speakers if v not in table]
-        if missing:
-            # Voices without a fingerprint (kept only for branch compatibility) get zeros; they must not be trained on.
-            print(json.dumps({"fingerprints_missing": len(missing), "examples": missing[:5]}), flush=True)
-        dim = c.speaker_embedding_dim
-        rows = torch.stack([table[v].float() if v in table else torch.zeros(dim) for v in c.speakers]).to(args.device)
-        for module in (system.model.voices, system.model.frame_voices):
-            module.fingerprints.copy_(rows)
-            module.noise = args.fingerprint_noise
+    if c.speaker_embedding_dim and not args.speaker_fingerprints:
+        parser.error("speaker_embedding_dim > 0 needs --speaker-fingerprints")
     ema = EMA(system.model, args.ema_decay) if args.ema_decay is not None else None
     if args.resume:
         state = torch.load(args.resume, map_location=args.device, weights_only=True)
@@ -773,6 +761,29 @@ def main():
     (args.output / "config.json").write_text(json.dumps(c.to_dict(), indent=2) + "\n")
     (args.output / "recipe.json").write_text(json.dumps({**recipe, "annotation": train.annotation, "frontend": frontend_fingerprint(c.profile),
                                                          "train_utterances": len(pool), "datasets": fingerprints}, indent=2) + "\n")
+    if c.speaker_embedding_dim:
+        # Fingerprint voices, filled AFTER any checkpoint was loaded (a branch/resume would otherwise overwrite the
+        # file's fingerprints with the checkpoint's buffer). Every training voice must have one: no silent zeros.
+        table_file = torch.load(args.speaker_fingerprints, map_location="cpu", weights_only=False)
+        table, clips = table_file["fingerprints"], table_file.get("clips", {})
+        trained = sorted({row["speaker"] for row in train.rows})
+        lacking = [v for v in trained if v not in table]
+        if lacking:
+            raise ValueError(f"training voices without a fingerprint: {lacking[:5]}")
+        dim = c.speaker_embedding_dim
+        rows = torch.stack([table[v].float() if v in table else torch.zeros(dim) for v in c.speakers]).to(args.device)
+        depth = max((len(clips[v]) for v in c.speakers if v in clips), default=0)
+        bank = torch.zeros(len(c.speakers), depth, dim)
+        count = torch.zeros(len(c.speakers), dtype=torch.long)
+        for i, v in enumerate(c.speakers):
+            if v in clips and len(clips[v]):
+                bank[i, :len(clips[v])] = clips[v].float(); count[i] = len(clips[v])
+        for module in (system.model.voices, system.model.frame_voices):
+            module.fingerprints.copy_(rows)
+            module.bank, module.bank_count = bank.to(args.device), count.to(args.device)
+            module.noise = args.fingerprint_noise
+        print(json.dumps({"fingerprints": len(table), "clip_bank_voices": int((count > 0).sum()), "bank_depth": depth,
+                          "fingerprint_noise": args.fingerprint_noise}), flush=True)
     print(json.dumps({"inference_parameters": count, "training_only_parameters": sum(p.numel() for p in system.mel_head.parameters())
                       + sum(p.numel() for p in critics.parameters()), "train_utterances": len(pool), "start_step": step,
                       "branched": bool(args.init_from), "resumed": bool(args.resume)}), flush=True)

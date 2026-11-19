@@ -1336,3 +1336,21 @@ From now on decisions are made and recorded here, without waiting for approval.
     user's voice, fix the bugs, whiten the fingerprint and add explicit
     pitch/spectrum descriptors, then 1–2k real speakers (all VoxPopuli plus
     Common Voice Italian).
+- **Cheap cloning tests on the user's voice (22:30), scored with ECAPA** (accept ≥ 0.538; rank of the
+  user's clip among 96 male voices):
+
+  | | ECAPA | rank |
+  |---|---|---|
+  | pilot clone / round-12 clone | 0.185 / 0.160 | 33 / 53 |
+  | Lorenzo + WORLD fitting (pitch, formant warp, average envelope) | 0.199 | 9 |
+  | pilot clone + WORLD fitting | 0.081 | 54 |
+  | **few-shot: only the two voice vectors optimised on the 9.4 s clip (400 steps, ~1 min GPU), new sentences** | **0.300** | **3** |
+  | few-shot + WORLD fitting | 0.034 | 72 |
+
+  - Few-shot is the best result so far: from a random stranger to the 3rd-nearest voice, on sentences
+    not in the clip. Still below acceptance: one 9 s clip, model frozen.
+  - WORLD fitting is unreliable: the LPC formant estimate drives warps of 1.10–1.12 on already-close voices
+    and the WORLD resynthesis degrades identity. It helps only a distant source (Lorenzo). Not adopted.
+  - Fable bug fixes in code: per-clip fingerprint bank drawn per utterance (train = test conditions),
+    one draw shared by both voice tables, noise is a total length (0.1 → cosine ≈ 0.995), fingerprints
+    filled after checkpoint loading, training voices without a fingerprint now an error.

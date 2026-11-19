@@ -447,22 +447,47 @@ class MelCorrection(nn.Module):
 class FingerprintVoices(nn.Module):
     """Voice vectors from a frozen voice fingerprint (e.g. a WavLM speaker-verification x-vector) through a
     small learned projection, in place of one learned row per voice: a model trained this way can speak in
-    a voice it never saw, given that voice's fingerprint. ``fingerprints`` holds one per known voice (filled
-    from a file at training time); ``override`` [B, dim] replaces the lookup for unseen voices."""
+    a voice it never saw, given that voice's fingerprint.
 
-    def __init__(self, voices, dim, channels):
+    ``fingerprints`` [voices, dim]: one per known voice (its mean; used at inference). ``override`` [B, dim]
+    replaces the lookup for unseen voices. Training only: ``bank`` [voices, K, dim] holds single-clip
+    fingerprints, one of which is drawn per utterance (as at test time, where one clip is all there is), and
+    ``noise`` is the total length of a random perturbation of the unit fingerprint (0.1 keeps cosine ≈ 0.995).
+    The token-level and frame-level modules share one draw per step through ``shared``."""
+
+    def __init__(self, voices, dim, channels, shared=None):
         super().__init__()
         self.register_buffer("fingerprints", torch.zeros(voices, dim))
+        self.register_buffer("bank", torch.zeros(voices, 0, dim), persistent=False)
+        self.register_buffer("bank_count", torch.zeros(voices, dtype=torch.long), persistent=False)
         self.project = nn.Sequential(nn.Linear(dim, 2 * channels), nn.GELU(), nn.Linear(2 * channels, channels))
         self.override = None
-        self.noise = 0.0        # training only: perturbation of the unit-length fingerprint (robustness to real clips)
+        self.noise = 0.0
+        self.shared = shared if shared is not None else {}
+
+    def draw(self, speakers):
+        """The fingerprint per row: override, else (training) a random single-clip one plus noise, else the mean."""
+        if self.override is not None:
+            return self.override.to(self.fingerprints.dtype)
+        if not self.training:
+            return self.fingerprints[speakers]
+        cached = self.shared.get("draw")
+        if cached is not None and cached[0] is speakers:
+            return cached[1]
+        fingerprint = self.fingerprints[speakers]
+        if self.bank.shape[1]:
+            count = self.bank_count[speakers]
+            pick = (torch.rand(len(speakers), device=speakers.device) * count.clamp_min(1)).long()
+            clips = self.bank[speakers, pick]
+            fingerprint = torch.where((count > 0)[:, None], clips, fingerprint)
+        if self.noise > 0:
+            noise = torch.randn_like(fingerprint) * (self.noise / fingerprint.shape[-1] ** 0.5)
+            fingerprint = F.normalize(fingerprint + noise, dim=-1)
+        self.shared["draw"] = (speakers, fingerprint)
+        return fingerprint
 
     def forward(self, speakers):
-        fingerprint = self.override if self.override is not None else self.fingerprints[speakers]
-        fingerprint = fingerprint.to(self.fingerprints.dtype)
-        if self.training and self.noise > 0:
-            fingerprint = F.normalize(fingerprint + self.noise * torch.randn_like(fingerprint), dim=-1)
-        return self.project(fingerprint)
+        return self.project(self.draw(speakers))
 
 
 class TinyVoca(nn.Module):
@@ -471,14 +496,15 @@ class TinyVoca(nn.Module):
         self.config = c = config
         self.tokens = nn.Embedding(c.vocab_size, c.channels, padding_idx=0)
         self.stress = nn.Embedding(3, c.channels)
-        self.voices = (FingerprintVoices(len(c.speakers), c.speaker_embedding_dim, c.channels) if c.speaker_embedding_dim
+        shared = {}     # one fingerprint draw per training step for both voice tables
+        self.voices = (FingerprintVoices(len(c.speakers), c.speaker_embedding_dim, c.channels, shared) if c.speaker_embedding_dim
                        else nn.Embedding(len(c.speakers), c.channels))
         self.encoder = Stack(c, c.encoder_layers)
         # Outputs per token: log(1 + frames) and, for pause-capable tokens, a
         # "has frames at all" logit. A pause is absent more often than present, so
         # one regression would average both cases into a pause that is too short.
         self.duration = Predictor(c, 2)
-        self.frame_voices = (FingerprintVoices(len(c.speakers), c.speaker_embedding_dim, c.channels) if c.speaker_embedding_dim
+        self.frame_voices = (FingerprintVoices(len(c.speakers), c.speaker_embedding_dim, c.channels, shared) if c.speaker_embedding_dim
                              else nn.Embedding(len(c.speakers), c.channels))
         if c.emotions:
             # Scaled by intensity, so intensity 0 (and every unlabelled corpus) adds nothing.
