@@ -37,14 +37,15 @@
 
   nav { position: sticky; top: 0; z-index: 20; backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
         background: #0b0b0fcc; border-bottom: 1px solid var(--line); }
-  nav .in { max-width: 1080px; margin: 0 auto; padding: 12px 20px; display: flex; align-items: center; gap: 22px; }
+  nav .in { width: min(1440px, 100% - 64px); margin: 0 auto; padding: 12px 0; display: flex; align-items: center; gap: 22px; }
   nav .brand { font-weight: 700; letter-spacing: -.02em; color: var(--ink); display: flex; align-items: center; gap: 8px; }
   nav .brand i { width: 9px; height: 9px; border-radius: 50%; background: var(--p400); box-shadow: 0 0 12px var(--p400); }
   nav .links { display: flex; gap: 18px; margin-left: auto; font-size: 13.5px; }
   nav .links a { color: var(--muted); } nav .links a:hover { color: var(--ink); }
   @media (max-width: 760px) { nav .links a:not(.gh) { display: none; } }
 
-  main { max-width: 1080px; margin: 0 auto; padding: 0 20px 80px; position: relative; }
+  main { width: min(1440px, 100% - 64px); margin: 0 auto; padding: 0 0 80px; position: relative; }
+  @media (max-width: 640px) { main, nav .in { width: calc(100% - 32px); } }
   section { padding-top: 88px; scroll-margin-top: 40px; }
   .eyebrow { font: 500 12px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--p300); }
   h2 { margin: 12px 0 10px; font-size: clamp(28px, 4vw, 38px); line-height: 1.15; font-weight: 700; letter-spacing: -.025em; }
@@ -119,6 +120,25 @@
   .take .t { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .take .f { font: 11.5px var(--mono); color: var(--dim); }
   .take a { font: 12px var(--mono); }
+
+
+  /* network diagram (shared with network.js) */
+  .net { padding: 10px 6px 4px; overflow-x: auto; scrollbar-width: thin; scrollbar-color: transparent transparent; transition: scrollbar-color .2s; }
+  .net:hover { scrollbar-color: #8b7bf099 transparent; }
+  .net::-webkit-scrollbar { height: 8px; }
+  .net::-webkit-scrollbar-track { background: transparent; }
+  .net::-webkit-scrollbar-thumb { background: transparent; border-radius: 999px; }
+  .net:hover::-webkit-scrollbar-thumb { background: #8b7bf099; }
+  .net:hover::-webkit-scrollbar-thumb:hover { background: #b0a6f5; }
+  .net svg { display: block; min-width: 1380px; width: 100%; height: auto; }
+  .net .g { cursor: pointer; }
+  .net .g:hover .face, .net .g.on .face { fill: #8b7bf0; }
+  .net .g:hover text.t, .net .g.on text.t { fill: #ededfc; }
+  .net text { font-family: Inter, sans-serif; fill: #d6d6dc; }
+  .net text.t { font-weight: 700; font-size: 14.5px; fill: #f5f5f5; }
+  .net text.s { font-size: 12px; fill: #9b9ba6; }
+  .net text.m { font-family: "JetBrains Mono", monospace; font-size: 12.5px; fill: #b0a6f5; }
+  .net text.u { text-decoration: underline; }
 
   /* architecture */
   .flow { display: flex; align-items: stretch; gap: 0; overflow-x: auto; padding: 22px 18px; }
@@ -252,15 +272,9 @@
     <div class="eyebrow">02 · Architecture</div>
     <h2>Small models, sound physics</h2>
     <p class="sub">A FastSpeech-style voice model renders a rough source-filter waveform; a Vocos-style neural vocoder turns its spectrogram into
-      the final audio, starting from the phase of a pulse train at the predicted pitch. One ONNX graph, about 27 MB in fp32.</p>
-    <div class="card flow">
-      <div class="node"><b>Italian text</b><span>normalisation, sentence split</span></div><div class="arrow">→</div>
-      <div class="node"><b>eSpeak NG</b><span>phonemes, stress, geminates</span><em>WebAssembly</em></div><div class="arrow">→</div>
-      <div class="node hi"><b>Voice model</b><span>encoder, durations and pauses, pitch / voicing / energy, acoustic stack</span><em>4.54M</em></div><div class="arrow">→</div>
-      <div class="node"><b>Source-filter</b><span>pulse train + noise, 100-band Vocos log-mel</span></div><div class="arrow">→</div>
-      <div class="node hi"><b>Prior vocoder</b><span>ConvNeXt + iSTFT, phase from the pitch-driven pulse prior</span><em>2.23M</em></div><div class="arrow">→</div>
-      <div class="node"><b>Audio</b><span>24 kHz</span></div>
-    </div>
+      the final audio, starting from the phase of a pulse train at the predicted pitch. One ONNX graph: 28 MB in fp32, 8.6 MB in the int8 version this page loads.</p>
+    <div class="card net"><svg id="netsvg" viewBox="0 0 2245 665" role="img" aria-label="tiny-voca-it network diagram"></svg></div>
+    <p class="hint" style="margin:8px 2px 0;color:var(--dim);font-size:12.5px">Every tensor and layer, left to right · click any part for the full explanation</p>
     <p style="margin:14px 0 0"><a class="btn" href="architecture.html">Explore every layer, interactively →</a></p>
     <div class="cols">
       <div class="card"><div class="num">A</div><h3>Harmonic-prior vocoder</h3><p>The phase starts from a pulse train built from the predicted pitch, so harmonics stay
@@ -316,6 +330,7 @@
 </main>
 <footer>tiny-voca-it · Apache-2.0 · <a href="https://github.com/carbogninalberto/tiny-voca-it">github.com/carbogninalberto/tiny-voca-it</a></footer>
 
+<script src="network.js"></script>
 <script>
 const SAMPLES = [
   ["Prova", "Questa è una prova del modello tiny-voca, addestrato da zero sulla lingua italiana."],
@@ -567,6 +582,8 @@ fetch("site.json").then(r => r.json()).then(site => {
   $("bench-notes").innerHTML = (b.notes || []).map(esc).join("<br>");
   $("timeline").innerHTML = site.roadmap.map(s => `<div class="step ${s.state}"><b>${esc(s.title)}</b>${s.when ? `<span class="when">${esc(s.when)}</span>` : ""}<p>${esc(s.text)}</p></div>`).join("");
 }).catch(() => {});
+
+window.drawNetwork(document.getElementById("netsvg"), (id) => { location.href = "architecture.html#" + id; });
 
 const observer = new IntersectionObserver(es => es.forEach(e => e.isIntersecting && e.target.classList.add("in")), { threshold: .08 });
 document.querySelectorAll(".reveal").forEach(el => observer.observe(el));

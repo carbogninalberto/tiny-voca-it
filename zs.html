@@ -16,7 +16,8 @@
   body::before { content: ""; position: fixed; inset: 0; z-index: -1; background: linear-gradient(90deg, #ffffff0a 1px, #0000 1px), linear-gradient(#ffffff0a 1px, #0000 1px);
     background-size: 56px 56px; -webkit-mask-image: radial-gradient(80% 60% at 50% 0, #000 40%, #0000 100%); mask-image: radial-gradient(80% 60% at 50% 0, #000 40%, #0000 100%); }
   a { color: var(--p200); text-decoration: none; }
-  main { max-width: 1000px; margin: 0 auto; padding: 48px 20px 80px; }
+  main { width: min(1200px, 100% - 64px); margin: 0 auto; padding: 48px 0 80px; }
+  @media (max-width: 640px) { main { width: calc(100% - 32px); } }
   .eyebrow { font: 500 12px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--p300); }
   h1 { font-size: clamp(32px, 5vw, 48px); letter-spacing: -.03em; margin: 10px 0 8px; line-height: 1.1; }
   .sub { color: var(--muted); max-width: 720px; }
