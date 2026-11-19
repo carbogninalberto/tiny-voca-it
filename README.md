@@ -71,7 +71,7 @@ The design choices, numbers and failed attempts are documented in
 ## Benchmark
 
 On the Italian split of the public [MiniMax TTS Multilingual Test Set](https://huggingface.co/datasets/MiniMaxAI/TTS-Multilingual-Test-Set)
-(100 sentences, Whisper-large-v3), tiny-voca-it scores **0.54% WER** (CER 0.33%; 95% interval 0.20–0.96%). The published systems
+(100 sentences, Whisper-large-v3), tiny-voca-it 0.3.0 scores **0.50% WER** (CER 0.32%). The published systems
 on the same set range from 0.95% (Qwen3-TTS 1.7B) to 2.16%.
 
 - **Not the same task:** those systems clone voices zero-shot.
@@ -93,7 +93,7 @@ You need eSpeak NG 1.51 with the `it` voice on `PATH`; see
 
 ```bash
 python -m tiny_voca.infer \
-  --checkpoint runs/voice-four/inference-135000.pt \
+  --checkpoint runs/voice-six/inference-139000.pt \
   --vocoder runs/vocoder-four/vocoder-voicegain.pt \
   --voice EM4 \
   --text "Buongiorno! Come stai oggi?" \

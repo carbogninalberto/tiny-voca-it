@@ -1,18 +1,13 @@
 {
- "wer": 0.5357826253348641,
- "cer": 0.3303536727555383,
+ "wer": 0.4975124378109453,
+ "cer": 0.31739862676512504,
  "wer_by_voice": {
   "EF4": 0.6618133686300464,
-  "EM4": 0.3629764065335753
+  "EM4": 0.27223230490018147
  },
- "wer_without_digits": 0.5647263249348393,
+ "wer_without_digits": 0.5212858384013901,
  "lines_with_digits": 11,
  "wer_lines_with_digits": 0.3215434083601286,
- "wer_ci95": [
-  0.2,
-  0.96
- ],
- "words": 2613,
  "ci_method": "bootstrap over the 100 lines, 2000 resamples",
  "training_overlap": "0 of 164 benchmark sentences appear in the training texts",
  "gpu": {
@@ -25,14 +20,19 @@
   "threads": 1,
   "x_real_time": 22
  },
- "asr": "faster-whisper large-v3, beam 5",
- "voice_checkpoint": "runs/voice-four/inference-135000.pt (Lorenzo = EM4, Chiara = EF4)",
- "vocoder_checkpoint": "runs/vocoder-four/vocoder-voicegain.pt (225k; EM4 high-band gain 0.0, EF4 0.05)",
  "text_normalisation": "numbers to words (tiny_voca.italian_numbers)",
+ "wer_ci95": [
+  0.18,
+  0.91
+ ],
+ "words": 2613,
+ "asr": "faster-whisper large-v3, beam 5 (CPU int8 for this run; v0.2.0 was scored on GPU fp16)",
+ "voice_checkpoint": "runs/voice-six/inference-139000.pt (texture loss; Lorenzo = EM4, Chiara = EF4)",
+ "vocoder_checkpoint": "runs/vocoder-four/vocoder-voicegain.pt (225k; EM4 high-band gain 0.0, EF4 0.05)",
  "previous": {
-  "model": "IT1 + EF3 (round 5)",
-  "wer": 0.8036739380022963,
-  "cer": 0.5052467936261174,
-  "wer_lines_with_digits": 1.929260450160772
+  "model": "v0.2.0 (voice-four 135k)",
+  "wer": 0.5357826253348641,
+  "cer": 0.3303536727555383,
+  "wer_lines_with_digits": 0.3215434083601286
  }
 }

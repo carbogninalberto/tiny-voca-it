@@ -28,11 +28,10 @@ ROADMAP = [
     {"state": "done", "title": "Streaming", "when": "19 Nov", "text": "Sentence-level streaming in the browser: playback starts after the first sentence while the rest is synthesised. Next: chunked streaming inside long sentences, and a Python streaming API."},
     {"state": "done", "title": "New voices Lorenzo and Chiara, much stronger emotions", "when": "19 Nov", "text": "Two designed voices with 5 h of speech each, 150 emotion-congruent sentences per emotion (5× more), a voice-similarity filter, and a pitch-change loss against tremble. Data generation now ~2.4× faster (CUDA graphs)."},
     {"state": "done", "title": "Smaller downloads: lean and quantized ONNX", "when": "19 Nov", "text": "Signal-processing tables computed in the graph (47 → 28 MB); the page now loads an int8 version of 8.6 MB with the same intelligibility. fp16 (14.6 MB) and int4 (5.9 MB) variants are also built."},
-    {"state": "next", "title": "Voice model: intonation range and texture", "when": "next", "text": "Wider pitch range (now ~70% of real speech) and a noise-tolerant loss above 2 kHz."},
     {"state": "done", "title": "Numbers read the Italian way", "when": "19 Nov", "text": "Cardinals, decimals, percentages, euro amounts, times, dates and ordinals become words before phonemisation, identically in Python and in the browser."},
-    {"state": "done", "title": "Release 0.2.0", "when": "19 Nov", "text": "Checkpoints, one-file ONNX, model card, samples and checksums on GitHub Releases (v0.2.0)."},
-    {"state": "now", "title": "Clearer highs: a slightly larger voice model", "when": "in progress", "text": "Quality has plateaued at the model's size; a voice model about 30% larger (deeper acoustic stack, still under 9M in total) is trained from the release and kept only if it measures and sounds better."},
-    {"state": "next", "title": "tiny-voca-it-zs: zero-shot voice cloning", "when": "final", "text": "A separate, bigger model (about 8–10M parameters) with its own neural voice-fingerprint network: "
+    {"state": "done", "title": "Releases 0.2.0 and 0.3.0", "when": "19 Nov", "text": "Checkpoints, ONNX in four precisions (fp32 28 MB, fp16 15 MB, int8 9 MB, int4 6 MB), model card, samples and checksums on GitHub Releases."},
+    {"state": "done", "title": "Clearer highs: texture loss above 2 kHz", "when": "19 Nov", "text": "A loss that asks for the recorded amount of high-band detail instead of its average: detail 0.88 → 0.93 (Lorenzo), 0.91 → 0.95 (Chiara); preferred blind on both voices. A 26% larger model gained only ~1% and was not adopted."},
+    {"state": "now", "title": "tiny-voca-it-zs: zero-shot voice cloning", "when": "pilot running", "text": "A separate, bigger model (about 8–10M parameters) with its own neural voice-fingerprint network: "
      "record 15 seconds and speak in that voice instantly, in the browser, with no training. Trained on hundreds of Italian voices; "
      "tiny-voca-it stays the small two-voice model."},
 ]
@@ -63,7 +62,7 @@ def main():
             "rows": rows,
             "notes": [
                 f"WER by voice: Lorenzo {r['wer_by_voice']['EM4']:.2f}%, Chiara {r['wer_by_voice']['EF4']:.2f}%. Without the {r['lines_with_digits']} lines that contain digits: {r['wer_without_digits']:.2f}% "
-                f"(lines with digits: {r['wer_lines_with_digits']:.2f}%; numbers are read as words since 19 November, before: {r['previous']['wer_lines_with_digits']:.2f}%). Previous model (IT1 + EF3): {r['previous']['wer']:.2f}%.",
+                f"(lines with digits: {r['wer_lines_with_digits']:.2f}%; numbers are read as words since 19 November, before: {r['previous']['wer_lines_with_digits']:.2f}%). Previous version ({r['previous']['model']}): {r['previous']['wer']:.2f}%.",
                 "WER measures intelligibility only: every word understood. It says nothing about naturalness, intonation or the slight metallic "
                 "trace, where the 0.6–2B models are clearly ahead; no paper reports an Italian listening (MOS) score on this set.",
                 f"Our 95% interval ({r['wer_ci95'][0]:.2f}–{r['wer_ci95'][1]:.2f}%, bootstrap over the 100 lines, {r['words']} words) overlaps several systems: "

@@ -1234,3 +1234,9 @@ From now on decisions are made and recorded here, without waiting for approval.
     and the playground use it.
   - The benchmark is re-run on the CPU, because the GPU is busy with the
     zero-shot pool.
+- **0.3.0 benchmark (14:45):**
+  - MiniMax Italian, texture model: **WER 0.50%** (95% 0.18–0.91), CER 0.32%,
+    91/100 lines perfect. By voice: Lorenzo 0.27%, Chiara 0.66%.
+  - Scored with Whisper-large-v3 on CPU int8 because the GPU was busy; v0.2.0
+    used GPU fp16. The v0.2.0 files are kept in
+    `docs/benchmarks/minimax-it/v0.2.0/`.
