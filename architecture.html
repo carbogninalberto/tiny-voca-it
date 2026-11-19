@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tiny-voca-it · architecture</title>
+<meta name="description" content="How tiny-voca-it works: every network, layer and training step of a 6.8M-parameter Italian text-to-speech model.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root { --bg: #0b0b0f; --card: #131318; --card-2: #17171e; --line: #ffffff17; --line-2: #ffffff24; --ink: #f5f5f5; --muted: #9b9ba6; --dim: #6b6b76;
+          --p50: #ededfc; --p200: #b0a6f5; --p300: #8b7bf0; --p400: #6650eb; --p500: #4b38d9; --good: #34d399; --amber: #fbbf24; --sky: #7dd3fc;
+          --radius: 10px; --mono: "JetBrains Mono", ui-monospace, monospace; }
+  * { box-sizing: border-box; } [hidden] { display: none !important; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.65 Inter, -apple-system, sans-serif; -webkit-font-smoothing: antialiased; }
+  body::before { content: ""; position: fixed; inset: 0; z-index: -1; background: linear-gradient(90deg, #ffffff0a 1px, #0000 1px), linear-gradient(#ffffff0a 1px, #0000 1px);
+    background-size: 56px 56px; -webkit-mask-image: radial-gradient(80% 60% at 50% 0, #000 40%, #0000 100%); mask-image: radial-gradient(80% 60% at 50% 0, #000 40%, #0000 100%); }
+  a { color: var(--p200); text-decoration: none; } a:hover { color: var(--p50); }
+  code { font: .85em var(--mono); background: #ffffff0d; border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; }
+  nav { position: sticky; top: 0; z-index: 20; backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); background: #0b0b0fcc; border-bottom: 1px solid var(--line); }
+  nav .in { max-width: 1120px; margin: 0 auto; padding: 12px 20px; display: flex; gap: 18px; align-items: center; font-size: 13.5px; }
+  nav .brand { font-weight: 700; color: var(--ink); } nav .sp { margin-left: auto; display: flex; gap: 16px; } nav .sp a { color: var(--muted); }
+  @media (max-width: 760px) { nav .sp a:not(.keep) { display: none; } }
+  main { max-width: 1120px; margin: 0 auto; padding: 0 20px 90px; }
+  section { padding-top: 72px; scroll-margin-top: 50px; }
+  .eyebrow { font: 500 12px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--p300); }
+  h1 { font-size: clamp(36px, 6vw, 60px); line-height: 1.05; letter-spacing: -.035em; margin: 14px 0 10px; }
+  h2 { font-size: clamp(26px, 3.6vw, 34px); letter-spacing: -.025em; margin: 10px 0 8px; line-height: 1.15; }
+  h3 { font-size: 16px; margin: 0 0 6px; letter-spacing: -.01em; }
+  .sub { color: var(--muted); max-width: 760px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; }
+  .hint { font: 12px var(--mono); color: var(--dim); margin: 10px 0 0; }
+
+  /* the clickable pipeline */
+  .pipe { padding: 18px; overflow-x: auto; }
+  .lane { display: grid; grid-template-columns: repeat(7, minmax(118px, 1fr)); gap: 10px; min-width: 900px; align-items: stretch; }
+  .lane + .lane { margin-top: 12px; }
+  .lanelabel { font: 500 11px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--dim); margin: 6px 0 8px; }
+  .blk { position: relative; text-align: left; border: 1px solid var(--line-2); background: var(--card-2); color: var(--ink); border-radius: var(--radius);
+         padding: 10px 11px; cursor: pointer; font: 600 13px Inter, sans-serif; transition: border-color .15s, background .15s, transform .15s; }
+  .blk small { display: block; font: 400 11.5px/1.35 Inter, sans-serif; color: var(--muted); margin-top: 3px; }
+  .blk em { display: block; font: normal 10.5px var(--mono); color: var(--p200); margin-top: 6px; }
+  .blk:hover { border-color: var(--p300); transform: translateY(-1px); }
+  .blk[aria-pressed="true"] { border-color: var(--p400); background: linear-gradient(180deg, #6650eb2a, #6650eb0c); box-shadow: 0 0 0 1px var(--p400), 0 8px 30px -10px #6650eb88; }
+  .blk.text { border-style: dashed; } .blk.dsp { --c: var(--sky); } .blk.dsp em { color: var(--sky); }
+  .blk.train { border-color: #fbbf2433; } .blk.train em { color: var(--amber); }
+  .arrowrow { display: grid; grid-template-columns: repeat(7, minmax(118px, 1fr)); gap: 10px; min-width: 900px; color: var(--dim); text-align: center; font-size: 12px; }
+
+  /* detail panel */
+  .detail { margin-top: 16px; padding: 22px 24px; }
+  .detail .head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .detail .head h2 { margin: 0; font-size: 26px; }
+  .pill { font: 500 11px var(--mono); border: 1px solid var(--line-2); border-radius: 999px; padding: 2px 9px; color: var(--muted); }
+  .pill.p { color: var(--p200); border-color: #8b7bf055; }
+  .cols { display: grid; grid-template-columns: 1.15fr .85fr; gap: 22px; margin-top: 14px; }
+  @media (max-width: 860px) { .cols { grid-template-columns: 1fr; } }
+  .detail h4 { font: 500 11px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--p300); margin: 14px 0 6px; }
+  .detail p, .detail li { color: #d6d6dc; font-size: 14.5px; } .detail ul { padding-left: 18px; margin: 6px 0; }
+  .shape { font: 12.5px/1.6 var(--mono); background: #0b0b0f; border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; color: #cfcfe6; white-space: pre; overflow-x: auto; }
+  .prev { display: flex; justify-content: space-between; margin-top: 16px; font-size: 13px; }
+  .prev button { background: none; border: 1px solid var(--line-2); color: var(--muted); border-radius: 8px; padding: 5px 10px; cursor: pointer; font: 13px Inter, sans-serif; }
+  .prev button:hover { color: var(--ink); border-color: var(--p300); }
+
+  /* bar of parameters */
+  .budget { padding: 18px; }
+  .bar { display: flex; height: 26px; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); }
+  .bar div { display: flex; align-items: center; justify-content: center; font: 500 10.5px var(--mono); color: #0b0b0f; white-space: nowrap; overflow: hidden; cursor: pointer; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px; font-size: 12.5px; color: var(--muted); }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+
+  /* accordions */
+  details { border: 1px solid var(--line); border-radius: 12px; background: var(--card); margin-top: 10px; }
+  details summary { cursor: pointer; padding: 14px 18px; font-weight: 600; list-style: none; display: flex; justify-content: space-between; gap: 12px; }
+  details summary::after { content: "+"; color: var(--p300); font: 500 16px var(--mono); }
+  details[open] summary::after { content: "−"; }
+  details .body { padding: 0 18px 16px; color: #d6d6dc; font-size: 14.5px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; margin: 6px 0; }
+  th { text-align: left; font: 500 11px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--line-2); }
+  td { padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; } td.n { font-family: var(--mono); white-space: nowrap; }
+  footer { border-top: 1px solid var(--line); margin-top: 70px; padding: 24px 20px; text-align: center; color: var(--dim); font-size: 13px; }
+</style>
+</head>
+<body>
+<nav><div class="in">
+  <a class="brand" href="./">← tiny-voca-it</a>
+  <div class="sp"><a href="#pipeline" class="keep">Pipeline</a><a href="#budget">Parameters</a><a href="#training">Training</a><a href="#losses">Losses</a>
+    <a href="#inference">Inference</a><a href="#deploy">Deployment</a><a href="zs.html">Zero-shot</a></div>
+</div></nav>
+<main>
+  <section style="padding-top:56px">
+    <div class="eyebrow">Architecture · release 0.3.0</div>
+    <h1>How a 6.8M-parameter voice is built</h1>
+    <p class="sub">tiny-voca-it turns Italian text into 24 kHz speech with two small networks and a few pieces of classic signal processing.
+      Click any block of the pipeline to see what it does, what is inside, how it was trained and why it is designed that way.
+      Numbers are those of the released model (voice model 4,542,667 parameters, vocoder 2,224,578).</p>
+  </section>
+
+  <section id="pipeline">
+    <div class="eyebrow">01 · The pipeline</div>
+    <h2>From letters to a waveform</h2>
+    <div class="card pipe">
+      <div class="lanelabel">Text and voice model (4.54M)</div>
+      <div class="lane" id="lane1"></div>
+      <div class="lanelabel" style="margin-top:16px">Rendering (DSP) and neural vocoder (2.22M)</div>
+      <div class="lane" id="lane2"></div>
+      <div class="lanelabel" style="margin-top:16px">Training only · conditioning · zero-shot</div>
+      <div class="lane" id="lane3"></div>
+      <p class="hint">Click a block · use ← → to step through · each block has a link (#id)</p>
+    </div>
+    <div class="card detail" id="detail"></div>
+  </section>
+
+  <section id="budget">
+    <div class="eyebrow">02 · Parameter budget</div>
+    <h2>Where the 6.77M parameters go</h2>
+    <p class="sub">The two transformer stacks and the vocoder's ConvNeXt blocks hold almost everything; the source-filter "voice box" is only 26k parameters
+      because it is physics, not a network. Click a segment to open its block.</p>
+    <div class="card budget"><div class="bar" id="bar"></div><div class="legend" id="legend"></div></div>
+  </section>
+
+  <section id="training">
+    <div class="eyebrow">03 · How it was built</div>
+    <h2>Data, alignment and training rounds</h2>
+    <details open><summary>1 · Data: real readers and designed voices</summary><div class="body">
+      <p>The first models learned Italian from <b>CML-TTS Italian</b> (LibriVox audiobook readers, CC BY 4.0): one main reader (IT1, 11.4 h) and five more.
+      The product voices <b>Lorenzo</b> and <b>Chiara</b> are designed voices: <b>Qwen3-TTS VoiceDesign</b> created a timbre from a text description, and
+      <b>Qwen3-TTS Base</b> cloned that one reference clip onto ~5 h of sentences each, so the timbre stays fixed. Emotional speech (7 emotions × 2 intensities,
+      150 emotion-congruent sentences per emotion) was generated the same way.</p>
+      <p>Every clip is transcribed by <b>Whisper</b> and dropped if the words do not match (WER &gt; 0.1 for training), dropped if spoken too fast or too slow,
+      and emotional clips are dropped if a <b>speaker-verification model (WavLM)</b> says their timbre drifted from the voice's reference. Generation itself was
+      sped up ~3× by replacing Qwen's per-frame sub-code loop with a CUDA graph.</p></div></details>
+    <details><summary>2 · Features and alignment</summary><div class="body">
+      <p>Each clip becomes: 80-band log-mel frames (hop 256 = 10.7 ms at 24 kHz), the 100-band Vocos log-mel, pitch and voicing per frame, energy, and the
+      phoneme sequence from eSpeak NG. A CTC aligner assigns every phoneme its frames, so the model is trained on <b>supervised durations</b>
+      (no attention-based alignment to learn). Clips whose alignment is weak, whose vowels are unvoiced or whose phones are implausibly long are rejected.</p></div></details>
+    <details><summary>3 · Training rounds (each judged by measurements and blind listening)</summary><div class="body">
+      <table><tr><th>Round</th><th>What changed</th><th>Outcome</th></tr>
+        <tr><td>1–3</td><td>Voice model from scratch on CML-TTS; source-filter output</td><td>Intelligible but buzzy</td></tr>
+        <tr><td>4–5</td><td>Neural vocoder with harmonic prior, distilled from Vocos; adversarial fine-tune</td><td>Buzz gone; slight metallic trace</td></tr>
+        <tr><td>6</td><td>Vocoder trained over a range of high-band pulse shares; per-voice setting</td><td>Less metallic</td></tr>
+        <tr><td>7–8</td><td>Lorenzo and Chiara; 5× emotion data; pitch-change loss; per-emotion tempo</td><td>Emotions audible, no tremble</td></tr>
+        <tr><td>9</td><td>Deeper model (+3 blocks, 5.73M)</td><td>~1% better: rejected (keep it small)</td></tr>
+        <tr><td>10</td><td>Texture loss above 2 kHz</td><td>Crisper highs; preferred blind → release 0.3.0</td></tr>
+        <tr><td>11</td><td>Zero-shot pilot: fingerprint-conditioned voices, 200 designed voices</td><td>In progress (zs.html)</td></tr></table>
+      <p>Every round starts from the previous weights (branching appends new voices and layers without disturbing old ones), uses an
+      <b>EMA</b> of the weights (decay 0.999) for evaluation and release, and a GPU governor that caps utilisation and power.
+      The full decision log is in <a href="https://github.com/carbogninalberto/tiny-voca-it/blob/neural-vocoder-emotion/docs/analysis/quality-journey.md">quality-journey.md</a>.</p></div></details>
+  </section>
+
+  <section id="losses">
+    <div class="eyebrow">04 · What the networks are taught</div>
+    <h2>Losses</h2>
+    <div class="card" style="padding:6px 8px;overflow-x:auto"><table>
+      <tr><th>Loss</th><th>On</th><th>Why</th></tr>
+      <tr><td>Duration (L1 on log frames) + pause (BCE)</td><td>duration predictor</td><td>Rhythm; a separate "is there a pause" logit so pauses are not averaged into short ones</td></tr>
+      <tr><td>Pitch L1 (trusted frames ×1, interpolated ×0.1)</td><td>prosody head</td><td>Melody; only frames where the pitch tracker was confident count fully</td></tr>
+      <tr><td>Pitch spread (weight 4)</td><td>prosody head</td><td>Regression flattens intonation; this matches each utterance's pitch range</td></tr>
+      <tr><td>Pitch change (weight 10)</td><td>prosody head</td><td>Matches frame-to-frame pitch movement, so range comes from intonation, not jitter (tremble)</td></tr>
+      <tr><td>Voicing (BCE), energy (L1)</td><td>prosody head</td><td>Which frames are voiced and how loud</td></tr>
+      <tr><td>Multi-resolution STFT + 80-band mel (L1)</td><td>source-filter waveform</td><td>The rendered waveform must match the recording's spectrum</td></tr>
+      <tr><td>Vocos mel (L1, weight 10)</td><td>source-filter waveform</td><td>Exactly what the neural vocoder will read</td></tr>
+      <tr><td>Texture (weight 20)</td><td>Vocos mel bands ≥ 2 kHz</td><td>Matches the <i>amount</i> of frame-to-frame detail, not the values: point-wise losses average noise away</td></tr>
+      <tr><td>Adversarial + feature matching</td><td>both networks</td><td>Multi-period and multi-resolution STFT critics push towards realistic fine structure</td></tr>
+      <tr><td>Spectrum distillation from Vocos (weight 4) + mel (15)</td><td>vocoder</td><td>A 13.5M teacher shows the small vocoder the right magnitudes and phases</td></tr>
+    </table></div>
+  </section>
+
+  <section id="inference">
+    <div class="eyebrow">05 · At synthesis time</div>
+    <h2>Small rules that matter</h2>
+    <details open><summary>Numbers as words</summary><div class="body"><p>"€ 25,50" → "venticinque euro e cinquanta", "12:30" → "dodici e trenta", dates, percentages,
+      ordinals (with Italian elisions: ventuno, centotto, ventitré). Identical Python and JavaScript implementations, checked against each other.</p></div></details>
+    <details><summary>Vowels are always voiced</summary><div class="body"><p>The pitch tracker missed creaky vowels in recordings, so the voicing predictor learned to drop whole vowels
+      (a whispered word). Vowel frames are forced voiced at synthesis.</p></div></details>
+    <details><summary>Pitch smoothing (5 frames)</summary><div class="body"><p>A Hann low-pass of the predicted log-pitch, with the voiced spread restored, removes frame-level jitter
+      (heard as a tremble) without flattening intonation. Preferred blind on both voices.</p></div></details>
+    <details><summary>Emotion tempo</summary><div class="body"><p>Emotion is an embedding added to the voice model, scaled by intensity. The model learned the pitch cues but not
+      tempo, so a tiny table adjusts speed: sadness ×0.86, anger ×1.08, surprise ×1.06, fear ×1.05 (linear in intensity).</p></div></details>
+    <details><summary>Streaming</summary><div class="body"><p>The voice model is non-autoregressive, so the unit of streaming is a sentence: the first sentence plays (after ~0.2–0.8 s)
+      while the next ones are synthesised.</p></div></details>
+  </section>
+
+  <section id="deploy">
+    <div class="eyebrow">06 · Deployment</div>
+    <h2>One ONNX graph, four precisions</h2>
+    <p class="sub">The voice model, the source-filter rendering, the Vocos mel and the vocoder are exported as <b>one ONNX graph</b> that runs in ONNX Runtime
+      and in the browser (ONNX Runtime Web, WebAssembly). The STFT tables (≈20 MB) are computed inside the graph from the windows, so the full-precision file is
+      28 MB. Quantized versions keep the signal-processing exact and only compress the learned weights.</p>
+    <div class="card" style="padding:6px 8px;overflow-x:auto"><table><tr><th>Version</th><th>Size</th><th>How</th><th>Notes</th></tr>
+      <tr><td>fp32</td><td class="n">28.0 MB</td><td>full precision</td><td>reference</td></tr>
+      <tr><td>fp16</td><td class="n">14.6 MB</td><td>weights stored in fp16, computed in fp32</td><td>identical timing and intelligibility</td></tr>
+      <tr><td>int8 (page default)</td><td class="n">8.6 MB</td><td>int8 matrix weights (dynamic quantization) + fp16 storage</td><td>same intelligibility; no int8 convolutions in the browser runtime</td></tr>
+      <tr><td>int4</td><td class="n">5.9 MB</td><td>4-bit matrix weights in blocks of 32</td><td>fastest in the browser; slightly lower WER in tests</td></tr></table></div>
+  </section>
+</main>
+<footer>tiny-voca-it · Apache-2.0 · <a href="https://github.com/carbogninalberto/tiny-voca-it">source</a> · <a href="./">demo</a></footer>
+
+<script>
+// Every block: lane, kind, title, one-liner, parameter count, and the explanation shown in the detail panel.
+const B = [
+ { id: "text", lane: 1, kind: "text", title: "Italian text", sub: "normalisation, numbers, sentences", params: 0,
+   what: "The input. Before anything is learned, the text is cleaned: quotes and dashes unified, abbreviations expanded (\"Sig.\" → signor), numbers, times, dates, prices and ordinals written as Italian words, and long text split into sentences (and very long sentences at clause punctuation) for streaming.",
+   inside: "rules, no parameters\nitalian_numbers.py  ↔  numbers.js   (parity-tested)",
+   built: "Written by hand and tested; the Python and browser versions use identical ASCII regular expressions so they produce the same output.",
+   why: "A small model cannot learn to read \"12:30\" from a few hours of audiobooks; rules are exact, cost nothing and fixed most benchmark errors (lines with digits: 1.93% → 0.32% WER)." },
+ { id: "phonemes", lane: 1, kind: "text", title: "eSpeak NG", sub: "phonemes, stress, geminates", params: 0,
+   what: "Turns each word into phonemes with stress marks using eSpeak NG's Italian rules, then maps them to a fixed inventory of 66 symbols (phones, punctuation, word boundaries, specials). Double consonants become long phones (ː), so \"palla\" and \"pala\" differ.",
+   inside: "text  →  eSpeak NG (it)  →  canonical symbols\ntokens  [T]  int   (vocabulary 66)\nstress  [T]  int   (none / primary / secondary)",
+   built: "An Italian profile maps eSpeak output to the inventory; the browser runs the unmodified eSpeak NG WebAssembly build and a JavaScript port of the mapping that matches Python exactly.",
+   why: "Learning pronunciation from letters needs far more data than we have; a rule-based phonemizer gives correct Italian pronunciation for free, and the model only has to learn how to say phonemes." },
+ { id: "embed", lane: 1, title: "Token embedding", sub: "phoneme + stress + voice (+ emotion)", params: 12672 + 576 + 2688 + 1344,
+   what: "Each phoneme becomes a 192-dimensional vector: phoneme embedding + stress embedding + the voice's vector + (optionally) the emotion's vector times the intensity slider.",
+   inside: "x = E_token[t] + E_stress[s] + E_voice[v] + intensity · E_emotion[e]\nE_token 66×192 · E_stress 3×192 · E_voice 14×192 · E_emotion 7×192\n→ [T, 192]",
+   built: "Trained with everything else. New voices are appended as new rows, started from a similar existing voice (Lorenzo from EM1, Chiara from EF3).",
+   why: "Adding (not concatenating) voice and emotion keeps the width at 192 and lets every later layer see them for free. Emotion costs 1,344 parameters here (plus the same in the frame embedding)." },
+ { id: "encoder", lane: 1, title: "Text encoder", sub: "4 transformer blocks", params: 1588864,
+   what: "Reads the whole phoneme sequence and gives each phoneme context: how it is pronounced next to its neighbours, where the stress and the phrase boundaries are.",
+   inside: "4 × Block(192):\n  x += Attention(LN(x))          4 heads, rotary positions\n  x += Linear(GELU(Linear(DWConv7(LN(x)))))   192→640→192\nLN → [T, 192]",
+   built: "Pre-norm residual blocks with self-attention using rotary (relative) positions and a depthwise convolution (kernel 7) before the feed-forward layer; dropout 0.1; padding is masked before every convolution.",
+   why: "Rotary positions have no fixed table, so sentences longer than any seen in training still work. The depthwise convolution adds cheap local context (neighbouring phonemes matter most for pronunciation)." },
+ { id: "duration", lane: 1, title: "Duration & pause predictor", sub: "how long each phoneme lasts", params: 123906,
+   what: "For every phoneme it predicts log(1 + frames) and, for word boundaries and punctuation, whether there is a pause at all. Durations are divided by the speed slider and by the emotion tempo.",
+   inside: "Conv3(192→128) → GELU → LN → Conv3(128→128) → GELU → LN → Linear(128→2)\n→ [T, 2]: log-duration, pause logit\nframes = round(expm1(d) / speed), ≥ 1 for phones",
+   built: "Trained on durations from forced alignment (L1 on log frames) and a binary pause target; a phoneme is always at least one frame long.",
+   why: "Separating 'is there a pause' from 'how long' stops pauses from being averaged into too-short ones. Supervised durations make training stable for a tiny model (no attention to learn alignment)." },
+ { id: "expand", lane: 1, title: "Length regulator", sub: "phonemes → frames", params: 768 + 2688 + 1344,
+   what: "Repeats every phoneme's vector for as many 10.7 ms frames as its duration, and adds where in the phoneme each frame is (start/end, length), plus the voice and emotion again at frame level.",
+   inside: "[T, 192] --repeat by durations--> [N frames, 192]\n+ Linear(3→192)(position in phoneme: rel, 1−rel, log length)\n+ E_frame_voice[v] + intensity · E_frame_emotion[e]",
+   built: "No learned alignment: durations come from the predictor (or the aligner during training).",
+   why: "Telling each frame where it sits inside its phoneme lets the next stacks shape transitions (onset, steady part, release) without attention over thousands of frames." },
+ { id: "prosody", lane: 1, title: "Prosody stack", sub: "2 blocks → pitch, voicing, energy", params: 794624 + 579 + 768,
+   what: "Predicts the melody and loudness of the sentence frame by frame: log-pitch, whether the frame is voiced, and energy. These are then fed back as conditioning to the acoustic stack.",
+   inside: "2 × Block(192) → Linear(192→3): log F0, voicing logit, energy\npost: vowels forced voiced · 5-frame pitch smoothing · pitch range/shift\ncondition = Linear(3→192)(pitch, voiced, energy)",
+   built: "Trained on tracked pitch (L1, untrusted frames down-weighted), pitch spread, pitch change, voicing (BCE) and energy (L1). Early in training the true prosody conditions the acoustic stack (teacher forcing), later the model's own.",
+   why: "Making prosody explicit gives controls for free (pitch shift, intonation range) and lets the source-filter use the exact pitch, so harmonics are always in tune." },
+ { id: "acoustic", lane: 2, title: "Acoustic stack", sub: "5 blocks → spectral envelope", params: 1985984,
+   what: "The largest part of the voice model. From the frame features and the prosody it predicts how each frame should sound: the spectral envelope of the harmonic part and of the noise part.",
+   inside: "x = frames + condition\n5 × Block(192)  (as in the encoder)\n→ [N, 192] acoustic features",
+   built: "Trained through the rendered waveform (STFT, mel, Vocos-mel, texture and adversarial losses), so gradients flow through the DSP below.",
+   why: "We tried 8 blocks (+26% parameters): only ~1% better, so the release keeps 5 (the size limit is a design goal)." },
+ { id: "sourcefilter", lane: 2, kind: "dsp", title: "Source-filter", sub: "pulses + noise → waveform", params: 25862,
+   what: "A tiny 'voice box'. A pulse train at the predicted pitch (vocal folds) and white noise (breath, fricatives) are each filtered by envelopes the network predicts as cepstral coefficients; the result is an intermediate 24 kHz waveform.",
+   inside: "harmonic head: Linear(192→80+16+2)  causal + anti-causal cepstrum (FFT 512, hop 128)\nnoise head:    Linear(192→32+4)      noise cepstrum (FFT 256, hop 64)\npulses ≤ 0.47·Nyquist · STFT × response · inverse STFT",
+   built: "The heads start quiet and spectrally flat; everything else is fixed signal processing. Trained end-to-end through the losses on its output.",
+   why: "Physics gives correct pitch and phase coherence for 26k parameters. Alone it sounds buzzy, which is why a neural vocoder now re-renders its spectrum." },
+ { id: "vocosmel", lane: 2, kind: "dsp", title: "Vocos log-mel", sub: "100 bands, the vocoder's input", params: 0,
+   what: "The intermediate waveform is analysed into the 100-band log-mel spectrogram that the Vocos vocoder family reads (FFT 1024, hop 256).",
+   inside: "|STFT(1024, hop 256, Hann)| → 100 mel filters (HTK) → log\n→ [100, N+1]",
+   built: "Fixed. In the ONNX graph the STFT kernels are computed from the window at run time instead of being stored (≈20 MB saved).",
+   why: "Using Vocos's exact feature lets a strong pretrained Vocos (13.5M) act as the vocoder's teacher, and lets us compare against it on identical input." },
+ { id: "prior", lane: 2, kind: "dsp", title: "Harmonic prior", sub: "pulse-train phase, per voice", params: 0,
+   what: "A pulse train at the model's own pitch (plus a little noise) is analysed with the same STFT. Its phase is the starting point of the vocoder's output phase and its log-magnitude is an extra input. Above 2.5 kHz the pulse share fades (per voice: Lorenzo 0, Chiara 0.05).",
+   inside: "prior = STFT(pulses·voicing)·w(f) + STFT(0.03·noise)\nw(f) = 1 below 2.5 kHz → per-voice gain at 5 kHz\noutput phase = angle(prior) + predicted correction",
+   built: "Fixed signal processing; the per-voice high-band gain was chosen so that pulse locking at 4–6 kHz matches each voice's real recordings.",
+   why: "A small vocoder struggles to invent coherent phase (the classic metallic sound). Starting from the pulse train's phase gives coherent harmonics for free; letting the high band be noisier removes the over-locked, metallic edge." },
+ { id: "vocoder", lane: 2, title: "Neural vocoder", sub: "8 ConvNeXt blocks + iSTFT", params: 2224578,
+   what: "Predicts, for every STFT bin and frame, the log-magnitude and a phase correction, then one inverse STFT produces the final 24 kHz audio. Everything runs at the frame rate (94 frames/s), which keeps it fast on CPU.",
+   inside: "Conv7(100→192) + Conv1(513→192)(log prior) → LN\n8 × ConvNeXt(192, 576): DWConv7 → LN → Linear → GELU → Linear (scaled residual)\nLN → Linear(192 → 1026): log|X|, Δphase   [513 bins]\niSTFT(1024, hop 256) → 24 kHz",
+   built: "Distilled from Vocos on spectrum level (weight 4) with mel L1 (15) and adversarial training; later fine-tuned on Lorenzo and Chiara with the high-band pulse share drawn from [0, 0.1] so every per-voice setting is in distribution.",
+   why: "Vocos-style iSTFT vocoders avoid upsampling stacks entirely, so 2.2M parameters run ~22× real time on one CPU thread." },
+ { id: "audio", lane: 2, kind: "text", title: "Audio", sub: "24 kHz, streamed by sentence", params: 0,
+   what: "The output. Playback is normalised to about −20 LUFS everywhere (playground, page, samples) so comparisons are fair.",
+   inside: "[samples] float32, 24 kHz mono",
+   built: "—",
+   why: "Loudness changes how metallic speech sounds; a fixed playback level keeps blind tests honest." },
+ { id: "critics", lane: 3, kind: "train", title: "Critics", sub: "multi-period + multi-resolution", params: 0,
+   what: "Training-only networks that look at real and generated audio and learn to tell them apart; the generator learns to fool them and to match their internal features (feature matching).",
+   inside: "Multi-period: 2-D convs over audio folded by periods\nMulti-resolution STFT: 2-D convs over spectrograms\nleast-squares adversarial loss + feature-matching L1",
+   built: "Used for both the voice model (on the rendered waveform) and the vocoder; ramped in gradually; never shipped.",
+   why: "Point-wise losses produce averaged, slightly dull output; adversarial training restores realistic fine structure." },
+ { id: "teacher", lane: 3, kind: "train", title: "Vocos teacher", sub: "13.5M, distillation", params: 0,
+   what: "The pretrained Vocos 24 kHz vocoder renders the same mel; the small vocoder is trained to reproduce Vocos's spectrum (magnitude and phase).",
+   inside: "loss = ‖log|X_student| − log|X_vocos|‖ + phase terms (weight 4)",
+   built: "Frozen; used only during vocoder training.",
+   why: "A teacher signal is much richer than the waveform alone, so a 6× smaller vocoder learns faster and better." },
+ { id: "emotion", lane: 3, title: "Emotion control", sub: "7 emotions × intensity", params: 2688,
+   what: "Neutral, joy, sadness, anger, fear, surprise and disgust, each with an intensity 0–1.5. An emotion is a learned vector added to the token and frame features, scaled by intensity; tempo is adjusted by a small table.",
+   inside: "x += intensity · E_emotion[e]    (2 tables × 7 × 192)\nspeed ×= 1 + (tempo[e] − 1) · intensity",
+   built: "Trained on ~1,000 emotional clips per voice (150 emotion-congruent sentences per emotion, filtered for timbre drift) shown 3× per epoch.",
+   why: "Costs 2,688 parameters. The model learned the pitch cues; tempo needed the explicit table (sad speech is ~20% slower)." },
+ { id: "voices", lane: 3, title: "Voices", sub: "Lorenzo, Chiara (+12 hidden)", params: 5376,
+   what: "Each voice is a learned vector in two tables (token and frame level). The release offers two: Lorenzo (soft, warm male) and Chiara (calm, assured female); 12 earlier voices remain in the tables for compatibility.",
+   inside: "E_voice, E_frame_voice: 14 × 192 each",
+   built: "Voices are appended when branching; new rows start from a similar existing voice.",
+   why: "Two well-trained voices beat twelve average ones; adding a voice costs 384 parameters." },
+ { id: "zeroshot", lane: 3, title: "Zero-shot (pilot)", sub: "voice from a fingerprint", params: 0,
+   what: "In tiny-voca-it-zs the voice tables are replaced by a projection of a voice fingerprint: a 512-number vector from a speaker-verification network (WavLM). Any short clip gives a fingerprint, so the model can speak in voices it never saw.",
+   inside: "fingerprint [512] (frozen WavLM-SV)\n→ Linear(512→384) → GELU → Linear(384→192)   (×2: token and frame level)",
+   built: "Pilot: 200 designed voices, 20 held out for testing; trained from the release weights. In the browser the fingerprint network runs locally (88 MB, 4-bit).",
+   why: "No per-voice slots means the model must generalise from the fingerprint. Next step: a small own fingerprint network (1–3M) so it stays tiny. Try it on the zero-shot page." },
+];
+const order = B.map((b) => b.id);
+const byId = Object.fromEntries(B.map((b) => [b.id, b]));
+const fmt = (n) => n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "k" : n ? String(n) : "—";
+
+for (const lane of [1, 2, 3]) {
+  const box = document.getElementById("lane" + lane);
+  for (const b of B.filter((x) => x.lane === lane)) {
+    const el = document.createElement("button");
+    el.className = "blk" + (b.kind ? " " + b.kind : ""); el.id = "b-" + b.id; el.dataset.id = b.id;
+    el.innerHTML = `${b.title}<small>${b.sub}</small><em>${b.params ? fmt(b.params) + " params" : b.kind === "train" ? "training only" : b.kind === "dsp" ? "signal processing" : b.kind === "text" ? "no parameters" : ""}</em>`;
+    el.onclick = () => show(b.id, true);
+    box.append(el);
+  }
+}
+
+function esc(s) { return s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
+function show(id, scroll) {
+  const b = byId[id] || B[3];
+  document.querySelectorAll(".blk").forEach((el) => el.setAttribute("aria-pressed", String(el.dataset.id === b.id)));
+  const i = order.indexOf(b.id), prev = B[(i - 1 + B.length) % B.length], next = B[(i + 1) % B.length];
+  document.getElementById("detail").innerHTML = `
+    <div class="head"><h2>${b.title}</h2><span class="pill p">${b.params ? fmt(b.params) + " parameters" : b.kind === "train" ? "training only" : "no learned parameters"}</span>
+      <span class="pill">${b.sub}</span></div>
+    <div class="cols"><div><h4>What it does</h4><p>${b.what}</p><h4>How it was built</h4><p>${b.built}</p><h4>Why this design</h4><p>${b.why}</p></div>
+      <div><h4>Inside</h4><div class="shape">${esc(b.inside)}</div></div></div>
+    <div class="prev"><button data-go="${prev.id}">← ${prev.title}</button><button data-go="${next.id}">${next.title} →</button></div>`;
+  document.querySelectorAll("#detail [data-go]").forEach((el) => el.onclick = () => show(el.dataset.go, false));
+  history.replaceState(null, "", "#" + b.id);
+  if (scroll) document.getElementById("detail").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+document.addEventListener("keydown", (e) => {
+  if (!["ArrowLeft", "ArrowRight"].includes(e.key) || e.target.tagName === "TEXTAREA") return;
+  const current = document.querySelector('.blk[aria-pressed="true"]')?.dataset.id || order[0];
+  const i = order.indexOf(current);
+  show(order[(i + (e.key === "ArrowRight" ? 1 : -1) + order.length) % order.length], false);
+});
+
+// parameter budget bar
+const parts = [["encoder", "#8b7bf0"], ["acoustic", "#6650eb"], ["prosody", "#b0a6f5"], ["duration", "#d5d1fa"], ["embed", "#ededfc"], ["sourcefilter", "#7dd3fc"], ["vocoder", "#34d399"]];
+const total = 4542667 + 2224578;
+const shown = parts.map(([id, color]) => [id, color, byId[id].params]);
+const rest = total - shown.reduce((s, x) => s + x[2], 0);
+document.getElementById("bar").innerHTML = shown.map(([id, color, n]) => `<div style="width:${(100 * n / total).toFixed(2)}%;background:${color}" title="${byId[id].title}: ${fmt(n)}" data-id="${id}">${n / total > .07 ? byId[id].title + " " + fmt(n) : ""}</div>`).join("")
+  + `<div style="width:${(100 * rest / total).toFixed(2)}%;background:#6b6b76" title="other: ${fmt(rest)}"></div>`;
+document.getElementById("legend").innerHTML = shown.map(([id, color, n]) => `<span><i style="background:${color}"></i>${byId[id].title} ${fmt(n)}</span>`).join("") + `<span><i style="background:#6b6b76"></i>other ${fmt(rest)}</span>`;
+document.querySelectorAll("#bar [data-id]").forEach((el) => el.onclick = () => show(el.dataset.id, true));
+
+const start = location.hash.slice(1);
+show(byId[start] ? start : "encoder", false);
+if (byId[start]) setTimeout(() => document.getElementById("detail").scrollIntoView({ block: "nearest" }), 50);
+</script>
+</body>
+</html>

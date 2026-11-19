@@ -182,7 +182,7 @@
   <a class="brand" href="#top"><i></i>tiny-voca-it</a>
   <div class="links">
     <a href="#playground">Playground</a><a href="#architecture">Architecture</a><a href="#benchmarks">Benchmarks</a>
-    <a href="#notes">Notes</a><a href="#status">Status</a><a href="zs.html">Zero-shot ✦</a>
+    <a href="#notes">Notes</a><a href="#status">Status</a><a href="architecture.html">Deep dive</a><a href="zs.html">Zero-shot ✦</a>
     <a class="gh" href="https://github.com/carbogninalberto/tiny-voca-it">GitHub ↗</a>
   </div>
 </div></nav>
@@ -258,6 +258,7 @@
       <div class="node hi"><b>Prior vocoder</b><span>ConvNeXt + iSTFT, phase from the pitch-driven pulse prior</span><em>2.23M</em></div><div class="arrow">→</div>
       <div class="node"><b>Audio</b><span>24 kHz</span></div>
     </div>
+    <p style="margin:14px 0 0"><a class="btn" href="architecture.html">Explore every layer, interactively →</a></p>
     <div class="cols">
       <div class="card"><div class="num">A</div><h3>Harmonic-prior vocoder</h3><p>The phase starts from a pulse train built from the predicted pitch, so harmonics stay
         coherent without a large network. Above 2.5 kHz the pulse share is set per voice to match real speech.</p></div>
