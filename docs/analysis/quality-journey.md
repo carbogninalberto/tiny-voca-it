@@ -1106,3 +1106,17 @@ From now on decisions are made and recorded here, without waiting for approval.
   - On "double the data and train to 260k": the curve plateaued after about
     6k steps, and IT1 with 11.4 h plateaued at a similar error. The limit looks
     like model capacity, so a modestly larger model is the better experiment.
+- **Vocoder-four and benchmark (10:30):**
+  - Vocoder-four (225k, fine-tuned on EM4/EF4/emotion data plus IT1) beats
+    vocoder-three on both voices. Validation, real/model mel error: EM4
+    0.156/0.549 → 0.149/0.546, EF4 0.178/0.598 → 0.176/0.597.
+  - Per-voice high-band gain: the value whose locking matches real speech. EM4
+    0.0 gives 0.44 (real 0.44); EF4 0.05 gives 0.51 (real 0.52).
+  - Published on Pages.
+  - MiniMax Italian benchmark with Lorenzo and Chiara and numbers as words:
+    **WER 0.54%** (95% 0.20–0.96), CER 0.33%, 90/100 lines perfect. Lines with
+    digits: 1.93% → 0.32%. Previous IT1 + EF3 model: 0.80%.
+  - A permanent watchdog (`logs/watchdog-main.sh`) now turns every round-log
+    line into an event, alerts on tracebacks, GPU spill and RAM, restarts dead
+    rounds and keeps the playground alive. Lesson: the round-8 watchdog exited
+    with the round, and 30 minutes were lost after vocoder-four finished.

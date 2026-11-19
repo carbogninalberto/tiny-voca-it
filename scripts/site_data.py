@@ -44,7 +44,7 @@ def main():
     r = json.loads(a.result.read_text())
     synth = [json.loads(l) for l in (a.synth or a.result.parent / "synth.jsonl").read_text().splitlines()]
     rtf = sum(x["compute_seconds"] for x in synth) / sum(x["audio_seconds"] for x in synth)
-    ours = {"system": "tiny-voca-it (IT1 + EF3)", "short": "tiny-voca-it", "params": "6.8M", "wer": r["wer"], "sim": None, "ours": True,
+    ours = {"system": "tiny-voca-it (Lorenzo + Chiara)", "short": "tiny-voca-it", "params": "6.8M", "wer": r["wer"], "sim": None, "ours": True,
             "wer_ci": r.get("wer_ci95"), "source": "measured, this repository (fixed voices, not cloning)"}
     rows = sorted(PUBLISHED + [ours], key=lambda x: x["wer"])
     site = {
@@ -60,8 +60,8 @@ def main():
             ],
             "rows": rows,
             "notes": [
-                f"WER by voice: IT1 {r['wer_by_voice']['IT1']:.2f}%, EF3 {r['wer_by_voice']['EF3']:.2f}%. Without the {r['lines_with_digits']} lines that contain digits: {r['wer_without_digits']:.2f}% "
-                f"(lines with digits: {r['wer_lines_with_digits']:.1f}%; our text normalisation does not expand numbers yet).",
+                f"WER by voice: Lorenzo {r['wer_by_voice']['EM4']:.2f}%, Chiara {r['wer_by_voice']['EF4']:.2f}%. Without the {r['lines_with_digits']} lines that contain digits: {r['wer_without_digits']:.2f}% "
+                f"(lines with digits: {r['wer_lines_with_digits']:.2f}%; numbers are read as words since 19 November, before: {r['previous']['wer_lines_with_digits']:.2f}%). Previous model (IT1 + EF3): {r['previous']['wer']:.2f}%.",
                 "WER measures intelligibility only: every word understood. It says nothing about naturalness, intonation or the slight metallic "
                 "trace, where the 0.6–2B models are clearly ahead; no paper reports an Italian listening (MOS) score on this set.",
                 f"Our 95% interval ({r['wer_ci95'][0]:.2f}–{r['wer_ci95'][1]:.2f}%, bootstrap over the 100 lines, {r['words']} words) overlaps several systems: "

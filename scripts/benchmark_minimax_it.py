@@ -15,7 +15,7 @@ import numpy as np
 import soundfile as sf
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-VOICES = {"italian_female": "EF3", "italian_male": "IT1"}
+VOICES = {"italian_female": "EF4", "italian_male": "EM4"}   # Chiara, Lorenzo (round 8); IT1/EF3 before
 
 
 def lines(path):
@@ -67,7 +67,7 @@ def score(args):
     pooled = lambda rs, f: f([normalise(r["text"]) for r in rs], [normalise(r["heard"]) for r in rs]) * 100
     digits = [r for r in rows if re.search(r"\d", r["text"])]; plain = [r for r in rows if r not in digits]
     result = {"wer": pooled(rows, wer), "cer": pooled(rows, cer),
-              "wer_by_voice": {v: pooled([r for r in rows if r["voice"] == v], wer) for v in ("IT1", "EF3")},
+              "wer_by_voice": {v: pooled([r for r in rows if r["voice"] == v], wer) for v in sorted({r["voice"] for r in rows})},
               "wer_without_digits": pooled(plain, wer), "lines_with_digits": len(digits), "wer_lines_with_digits": pooled(digits, wer)}
     (args.out / "result.json").write_text(json.dumps(result, indent=1))
     print(json.dumps(result, indent=1))
@@ -76,6 +76,6 @@ def score(args):
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("mode", choices=("synth", "score")); p.add_argument("--text", type=Path, required=True); p.add_argument("--out", type=Path, required=True)
-    p.add_argument("--checkpoint", default="runs/voice-two/inference-115000.pt"); p.add_argument("--vocoder", default="runs/vocoder-two/vocoder-voicegain.pt")
+    p.add_argument("--checkpoint", default="runs/voice-four/inference-135000.pt"); p.add_argument("--vocoder", default="runs/vocoder-four/vocoder-voicegain.pt")
     p.add_argument("--threads", type=int, default=1); p.add_argument("--device", default="cuda")
     a = p.parse_args(); synth(a) if a.mode == "synth" else score(a)

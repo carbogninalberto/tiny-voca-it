@@ -1,16 +1,17 @@
 # Italian benchmark: MiniMax TTS Multilingual Test Set
 
 The Italian split of [MiniMaxAI/TTS-Multilingual-Test-Set](https://huggingface.co/datasets/MiniMaxAI/TTS-Multilingual-Test-Set)
-(100 sentences, CC BY-SA 4.0): `italian_female` lines are read by EF3 and `italian_male` lines by IT1.
+(100 sentences, CC BY-SA 4.0): `italian_female` lines are read by Chiara (EF4) and `italian_male` lines by Lorenzo (EM4).
 
-- **Model:** voice-two step 115k, vocoder-three 210k (per-voice high-band pulse share), pitch smoothing 5 frames.
+- **Model:** voice-four step 135k, vocoder-four 225k (per-voice high-band pulse share), pitch smoothing 5 frames, numbers read as words.
+- **Previous run:** IT1 + EF3 (round 5, no number normalisation), WER 0.80%, kept in `round5-it1-ef3/`.
 - **ASR:** faster-whisper large-v3, beam 5.
 - **WER/CER:** lower case, punctuation removed (seed-tts-eval style).
 - **Command:** `scripts/benchmark_minimax_it.py`. Per-line transcripts are in `scored.jsonl`.
 
 | System | Params | WER % | SIM | Source |
 |---|---|---|---|---|
-| **tiny-voca-it (IT1 + EF3)** | **6.8M** | **0.80** | n/a | measured here |
+| **tiny-voca-it (Lorenzo + Chiara)** | **6.8M** | **0.54** (95% 0.20–0.96) | n/a | measured here |
 | Qwen3-TTS 12Hz 1.7B Base | 1.7B | 0.95 | 0.817 | Qwen3-TTS report, Table 6 |
 | Qwen3-TTS 25Hz 1.7B Base | 1.7B | 1.11 | 0.718 | Qwen3-TTS report, Table 6 |
 | Qwen3-TTS 25Hz 0.6B Base | 0.6B | 1.17 | 0.722 | Qwen3-TTS report, Table 6 |
@@ -22,11 +23,10 @@ The Italian split of [MiniMaxAI/TTS-Multilingual-Test-Set](https://huggingface.c
 
 **Detail for tiny-voca-it:**
 
-- WER by voice: IT1 1.00%, EF3 0.66%.
-- CER: 0.51%.
-- The 11 lines with digits score 1.93%; the other lines score 0.65%. Most of the gap is digits written
-  as words ("tre a uno" for "3 a 1"), not misreadings.
-- 89 of the 100 lines are transcribed without an error.
+- WER by voice: Lorenzo 0.36%, Chiara 0.66%.
+- CER: 0.33%.
+- The 11 lines with digits score 0.32%, down from 1.93% before numbers were read as words.
+- 90 of the 100 lines are transcribed without an error.
 
 **Speed:**
 

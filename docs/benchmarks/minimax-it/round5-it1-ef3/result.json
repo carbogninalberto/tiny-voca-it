@@ -1,0 +1,31 @@
+{
+ "wer": 0.8036739380022963,
+ "cer": 0.5052467936261174,
+ "wer_by_voice": {
+  "IT1": 0.9981851179673321,
+  "EF3": 0.6618133686300464
+ },
+ "wer_without_digits": 0.6516072980017376,
+ "lines_with_digits": 11,
+ "wer_lines_with_digits": 1.929260450160772,
+ "gpu": {
+  "device": "NVIDIA GeForce RTX 5070 Ti",
+  "x_real_time": 79,
+  "median_sentence_ms": 74.0,
+  "batch": 1
+ },
+ "cpu": {
+  "threads": 1,
+  "x_real_time": 22
+ },
+ "voice_checkpoint": "runs/voice-two/inference-115000.pt",
+ "vocoder_checkpoint": "runs/vocoder-three/vocoder-voicegain.pt (210k, IT1 high-band gain 0.0)",
+ "asr": "faster-whisper large-v3, beam 5",
+ "wer_ci95": [
+  0.37,
+  1.35
+ ],
+ "words": 2613,
+ "ci_method": "bootstrap over the 100 lines, 2000 resamples",
+ "training_overlap": "0 of 164 benchmark sentences appear in the training texts"
+}

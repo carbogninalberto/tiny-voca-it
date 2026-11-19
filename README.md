@@ -1,7 +1,7 @@
 # tiny-voca-it
 
 tiny-voca-it is a small **Italian** text-to-speech model: about **6.8M parameters**
-in total, two voices (IT1 male, EF3 female), an emotion control, and a neural vocoder. It runs on a CPU and
+in total, two voices (Lorenzo, male; Chiara, female), an emotion control, and a neural vocoder. It runs on a CPU and
 in the browser.
 
 It started as a fork of [tiny-voca](https://github.com/n4ze3m/tiny-voca), a 4.5M
@@ -40,11 +40,13 @@ flowchart LR
 - **Italian front end:** an Italian eSpeak NG profile with stress and geminates, and
   a JavaScript port for the browser that matches the Python front end exactly.
 - **Two voices:**
-  - **IT1** (male): a CML-TTS audiobook reader.
-  - **EF3** (female): a synthetic voice, 6 hours cloned from one reference clip with
-    Qwen3-TTS and screened with Whisper.
-  - The model was pre-trained on 12 voices (six CML-TTS readers and six synthetic
-    emotional voices) and then fine-tuned on these two.
+  - **Lorenzo** (`EM4`, male): soft, warm, medium-low.
+  - **Chiara** (`EF4`, female): calm, assured, low.
+  - Both are designed voices: 5 hours of speech each plus about 1,000 emotional clips,
+    generated with Qwen3-TTS and screened with Whisper and a voice-similarity check.
+    Their audio is synthetic.
+  - The model was pre-trained on 12 voices (CML-TTS readers and synthetic emotional
+    voices), then fine-tuned on these two.
 - **Emotion control:** neutral, joy, sadness, anger, fear, surprise, disgust, each
   with an intensity (0–1.5). Implemented as intensity × a learned vector, so it costs
   about 3k parameters. It works best on the EF/EM voices.
@@ -69,7 +71,7 @@ The design choices, numbers and failed attempts are documented in
 ## Benchmark
 
 On the Italian split of the public [MiniMax TTS Multilingual Test Set](https://huggingface.co/datasets/MiniMaxAI/TTS-Multilingual-Test-Set)
-(100 sentences, Whisper-large-v3), tiny-voca-it scores **0.80% WER** (CER 0.51%). The published systems
+(100 sentences, Whisper-large-v3), tiny-voca-it scores **0.54% WER** (CER 0.33%; 95% interval 0.20–0.96%). The published systems
 on the same set range from 0.95% (Qwen3-TTS 1.7B) to 2.16%.
 
 - **Not the same task:** those systems clone voices zero-shot.
@@ -91,16 +93,16 @@ You need eSpeak NG 1.51 with the `it` voice on `PATH`; see
 
 ```bash
 python -m tiny_voca.infer \
-  --checkpoint runs/voice-two/inference-115000.pt \
-  --vocoder runs/vocoder-three/vocoder-voicegain.pt \
-  --voice IT1 \
+  --checkpoint runs/voice-four/inference-135000.pt \
+  --vocoder runs/vocoder-four/vocoder-voicegain.pt \
+  --voice EM4 \
   --text "Buongiorno! Come stai oggi?" \
   --output ciao.wav
 ```
 
 | Option | Default | Meaning |
 |---|---|---|
-| `--voice` | first voice | e.g. `IT1`, `CML4974`, `EF1` |
+| `--voice` | first voice | `EM4` (Lorenzo) or `EF4` (Chiara) |
 | `--vocoder` | none | Neural vocoder checkpoint. Without it you get the old source-filter output |
 | `--emotion` / `--intensity` | none / 1.0 | e.g. `--emotion joy --intensity 0.8` |
 | `--speed` | 1.0 | Speaking rate |
