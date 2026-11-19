@@ -46,6 +46,7 @@ from .vocoder import load_vocoder
 
 INPUTS = ("tokens", "stress", "voice", "speed", "pitch_shift", "pitch_range")
 EMOTION_INPUTS = ("emotion", "intensity")
+FINGERPRINT_INPUTS = ("fingerprint",)   # [1, speaker_embedding_dim] voice fingerprint (zero-shot models)
 OUTPUTS = ("audio", "durations")
 
 
@@ -101,6 +102,7 @@ class Exportable(nn.Module):
         self.model = model
         self.external_noise = external_noise
         self.emotional = model.emotions is not None
+        self.fingerprinted = bool(model.config.speaker_embedding_dim)
         if self.emotional:
             self.register_buffer("emotion_speed", torch.tensor([EMOTION_SPEED.get(e, 1.0) for e in model.config.emotions]), persistent=False)
         self.neural = vocoder
@@ -316,6 +318,11 @@ class Exportable(nn.Module):
             emotion, intensity, *extra = extra
             # Emotion tempo (model.EMOTION_SPEED), linear in intensity, as in TinyVoca.synthesize.
             speed = speed * (1 + (self.emotion_speed[emotion] - 1) * intensity)
+        if self.fingerprinted:
+            # Zero-shot: the voice comes from the fingerprint input (the voice index only keeps its input alive).
+            fingerprint, *extra = extra
+            fingerprint = fingerprint + 0 * voice.to(fingerprint.dtype)[:, None]
+            m.voices.override = m.frame_voices.override = fingerprint
         noise = extra[0] if extra else None
         token_mask = torch.ones_like(tokens, dtype=torch.bool)
         x = m.tokens(tokens) + m.stress(stress) + m.voices(voice)[:, None]
@@ -354,7 +361,10 @@ class Exportable(nn.Module):
         acoustic = m.acoustic_stack(prosody_hidden + m.prosody_projection(condition), frame_mask)
         f0 = (c.pitch_reference_hz * torch.exp(pitch + pitch_shift)).clamp(c.f0_min, c.f0_max)
         wave = self._vocoder(acoustic, f0, total, noise, voiced)
-        return (wave if self.neural is None else self._neural(wave, f0, voiced, total, voice)), durations
+        out = (wave if self.neural is None else self._neural(wave, f0, voiced, total, voice)), durations
+        if self.fingerprinted:
+            m.voices.override = m.frame_voices.override = None
+        return out
 
 
 def example_inputs(length=24, vocab_size=76):
@@ -370,6 +380,9 @@ def export(model, path, external_noise=False, opset=17, vocoder=None):
     if wrapper.emotional:
         inputs = (*inputs, torch.tensor([0]), torch.tensor([0.0]))
         names += list(EMOTION_INPUTS)
+    if wrapper.fingerprinted:
+        inputs = (*inputs, torch.zeros(1, model.config.speaker_embedding_dim))
+        names += list(FINGERPRINT_INPUTS)
     axes = {"tokens": {1: "tokens"}, "stress": {1: "tokens"}, "audio": {1: "samples"}, "durations": {1: "tokens"}}
     if external_noise:
         inputs = (*inputs, torch.randn(1, model.config.hop * model.config.max_frames))
@@ -388,7 +401,8 @@ def metadata(model, checkpoint, vocoder_checkpoint=None):
     value = {"sample_rate": c.sample_rate, "hop": c.hop, "voices": list(c.speakers), "symbols": list(profile.symbols),
              "max_tokens": c.max_tokens, "max_frames": c.max_frames, "step": state.get("step"),
              "frontend": frontend_identity(profile).get("phonemizer", "espeak"), "frontend_fingerprint": frontend_fingerprint(profile),
-             "inputs": list(INPUTS) + (list(EMOTION_INPUTS) if c.emotions else []), "outputs": list(OUTPUTS)}
+             "inputs": list(INPUTS) + (list(EMOTION_INPUTS) if c.emotions else []) + (list(FINGERPRINT_INPUTS) if c.speaker_embedding_dim else []),
+             "outputs": list(OUTPUTS)}
     if c.emotions:
         value["emotions"] = list(c.emotions)
     if vocoder_checkpoint is not None:

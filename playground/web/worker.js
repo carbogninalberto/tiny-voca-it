@@ -15,6 +15,7 @@ ort.env.wasm.numThreads = 1;
 let espeakModule = null, frontend = null;
 const sessions = new Map();
 let current = null;
+let fingerprintSession = null;
 const status = (text, progress) => postMessage({ type: "status", text, progress });
 
 async function download(url, label, hash) {
@@ -103,7 +104,7 @@ async function fit(sentence) {
   return [...await fit(words.slice(0, half).join(" ")), ...await fit(words.slice(half).join(" "))];
 }
 
-async function synthesize(phones, { speed, pitch, range, voice = 0, emotion = 0, intensity = 0 }) {
+async function synthesize(phones, { speed, pitch, range, voice = 0, emotion = 0, intensity = 0, fingerprint = null }) {
   const count = phones.ids.length;
   const integers = (values) => new ort.Tensor("int64", BigInt64Array.from(values.map(BigInt)), [1, count]);
   const scalar = (value) => new ort.Tensor("float32", Float32Array.from([value]), [1]);
@@ -113,6 +114,11 @@ async function synthesize(phones, { speed, pitch, range, voice = 0, emotion = 0,
     speed: scalar(speed), pitch_shift: scalar(pitch * Math.LN2 / 12), pitch_range: scalar(range),
   };
   if (current.metadata.inputs.includes("emotion")) Object.assign(feeds, { emotion: index(emotion), intensity: scalar(intensity) });
+  if (current.metadata.inputs.includes("fingerprint")) {
+    // Zero-shot model: the voice is a fingerprint vector (from a reference clip) instead of a voice index.
+    if (!fingerprint) throw new Error("choose a voice first");
+    feeds.fingerprint = new ort.Tensor("float32", Float32Array.from(fingerprint), [1, fingerprint.length]);
+  }
   const output = await current.session.run(feeds);
   return output.audio.data;
 }
@@ -167,6 +173,17 @@ onmessage = async ({ data }) => {
                     voices: current.metadata.voices, emotions: current.metadata.emotions || [] });
     } else if (data.type === "speak") {
       await speak(data);
+    } else if (data.type === "fingerprint") {
+      // Voice fingerprint of a 16 kHz mono clip with the speaker-verification network (downloaded once, cached).
+      if (!fingerprintSession) {
+        const bytes = await download(data.url, "Loading the voice-fingerprint model (once)", data.hash);
+        status("Starting the voice-fingerprint model");
+        fingerprintSession = await ort.InferenceSession.create(bytes, { executionProviders: ["wasm"] });
+      }
+      status("Computing the voice fingerprint");
+      const wave = new ort.Tensor("float32", data.wave, [1, data.wave.length]);
+      const output = await fingerprintSession.run({ wave });
+      postMessage({ type: "fingerprint", id: data.id, fingerprint: Array.from(output.fingerprint.data) });
     } else if (data.type === "cancel") {
       cancelled.add(data.id);
     }
