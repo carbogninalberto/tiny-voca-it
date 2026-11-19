@@ -1175,3 +1175,24 @@ From now on decisions are made and recorded here, without waiting for approval.
     8.6 MB. Whisper-small WER on 40 sentences: 3.95% against 3.72% for fp32,
     within noise.
   - Live on Pages: the first download drops from 47 MB to 8.6 MB.
+- **Round 9 verdict (12:57):**
+  - The deeper model (5.73M) at 155k: mel error EM4 0.541 and EF4 0.592,
+    against the release's 0.545 and 0.597 (about −1%).
+  - Emotion mismatch is mixed (EM4 worse, EF4 slightly better).
+  - Decision: keep the 4.54M release model. The gain is too small for 26% more
+    parameters under the keep-it-small constraint. Capacity is not the main
+    bottleneck.
+- **Intonation range is already right** for the new voices: predicted pitch
+  spread is 104% of the data for EM4 and 100% for EF4. The "70%" figure
+  belonged to IT1/EF3. No change.
+
+### 6.12 Round 10: texture loss above 2 kHz (19 November, 13:00)
+
+- **Loss:** `--texture`. For every Vocos mel band centred at or above 2 kHz, match
+  the mean absolute frame-to-frame change per utterance to the recording's,
+  rather than the values. This is the variability analogue of the pitch-spread
+  loss. Model output has about 0.88× the recorded detail there; point-wise L1
+  rewards the average.
+- **Setup:** weight 20 (about 9% of the loss), 8k steps at lr 5e-5 from the
+  release EMA weights. Judged on detail, mel error and locking per voice, plus
+  a blind test.

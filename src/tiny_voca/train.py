@@ -80,7 +80,19 @@ class TrainingSystem(nn.Module):
         self.spectral = SpectralLoss(config.sample_rate)
         self.vocos_mel = VocosMel(bands=config.vocos_mels or 100) if config.vocos_mels or config.vocos_mel_loss else None
 
-    def objective(self, batch, teacher_probability, weights=WEIGHTS, random_phase=True, pitch_delta=0.0):
+    _texture_bands = {}
+
+    @classmethod
+    def texture_bands(cls, bands, device, low_hz=2000.0):
+        """Indices of the Vocos mel bands centred at or above ``low_hz`` (cached)."""
+        key = (bands, str(device), low_hz)
+        if key not in cls._texture_bands:
+            from .losses import VocosMel
+            centre = VocosMel().filters.argmax(1).float() * 24000 / 1024
+            cls._texture_bands[key] = (centre >= low_hz).nonzero()[:, 0].to(device)
+        return cls._texture_bands[key]
+
+    def objective(self, batch, teacher_probability, weights=WEIGHTS, random_phase=True, pitch_delta=0.0, texture=0.0):
         """Loss on full utterances. Returns ``(loss, terms, auxiliary)``.
 
         ``teacher_probability`` is the per-utterance chance that the acoustic
@@ -138,8 +150,19 @@ class TrainingSystem(nn.Module):
             vocos_mask = torch.arange(frames_vocos, device=lengths.device)[None] <= lengths[:, None]
             with torch.no_grad():
                 real_vocos = self.vocos_mel(batch["wave"])
-            terms["vocoder_input"] = masked_mean((self.vocos_mel(wave) - real_vocos).abs().mean(-1), vocos_mask)
+            predicted_vocos = self.vocos_mel(wave)
+            terms["vocoder_input"] = masked_mean((predicted_vocos - real_vocos).abs().mean(-1), vocos_mask)
             loss = loss + c.vocos_mel_loss * terms["vocoder_input"]
+            # Texture above 2 kHz: match the AMOUNT of frame-to-frame change per band and utterance, not the
+            # values. Point-wise L1 rewards the average and smooths noise-like detail away (model output has
+            # ~0.88x the recorded detail there); like the pitch-spread loss, this asks for the recorded
+            # variability. Always measured; weighted only when the recipe sets ``texture``.
+            high = self.texture_bands(predicted_vocos.shape[-1], predicted_vocos.device)
+            pair = (vocos_mask[:, 1:] & vocos_mask[:, :-1]).float()[..., None]
+            change = lambda x: ((x[:, 1:, high] - x[:, :-1, high]).abs() * pair).sum(1) / pair.sum(1).clamp_min(1)
+            terms["texture"] = (change(predicted_vocos) - change(real_vocos)).abs().mean()
+            if texture:
+                loss = loss + texture * terms["texture"]
         if m.mel_output is not None:
             # Kept out of WEIGHTS so existing recipes (and their resume checks) are unchanged.
             with torch.no_grad():
@@ -175,7 +198,7 @@ def crops(fake, real, lengths, size, count):
 SCHEDULES = ("half_life", "cosine")
 # Recipe fields added after format 4. A run recorded without them used these
 # values, so resuming it compares equal and behaves exactly as before.
-RECIPE_DEFAULTS = {"schedule": "half_life", "lr_floor": 0.0, "ema_decay": None, "total_steps": None, "mel_critic": False, "pitch_delta": 0.0}
+RECIPE_DEFAULTS = {"schedule": "half_life", "lr_floor": 0.0, "ema_decay": None, "total_steps": None, "mel_critic": False, "pitch_delta": 0.0, "texture": 0.0}
 
 
 def learning_rate(step, base, warmup, half_life, start=0, schedule="half_life", total=None, floor=0.0):
@@ -259,7 +282,7 @@ def optimize_step(system, critics, optimizer, critic_optimizer, batch, step, rec
         group["lr"] = learning_rate(step, recipe["learning_rate"], 1, recipe["lr_half_life"], start, **schedule)
     optimizer.zero_grad(set_to_none=True)
     probability = teacher_probability(step, recipe["teacher_hold"], recipe["teacher_ramp"], recipe["teacher_final"])
-    loss, metrics, auxiliary = system.objective(batch, probability, weights, pitch_delta=recipe.get("pitch_delta", 0.0))
+    loss, metrics, auxiliary = system.objective(batch, probability, weights, pitch_delta=recipe.get("pitch_delta", 0.0), texture=recipe.get("texture", 0.0))
     if step >= recipe["gan_start"]:
         wave = auxiliary["wave"]
         fake, real, index = crops(wave, batch["wave"], batch["frame_lengths"] * system.model.config.hop, recipe["crop_samples"], recipe["crops"])
@@ -464,6 +487,8 @@ def validate(system, dataset, indices, device, weights=WEIGHTS, batch_size=8, fr
             totals[f"validation_{name}_stft"] += float(metrics["stft"]) * size
             if "vocoder_input" in metrics:
                 totals[f"validation_{name}_vocoder_input"] += float(metrics["vocoder_input"]) * size
+            if "texture" in metrics:
+                totals[f"validation_{name}_texture"] += float(metrics["texture"]) * size
         for key in ("duration", "pause_accuracy", "pause_length_ratio", "pitch_error_semitones", "pitch_spread_ratio", "pitch_delta", "voicing_accuracy",
                     "duration_length_ratio", "duration_length_error"):
             totals["validation_" + key] += float(metrics[key]) * size
@@ -499,6 +524,7 @@ def main():
     parser.add_argument("--gan-scale-max", type=float, default=2000.0)
     parser.add_argument("--crop-samples", type=int, default=8192)
     parser.add_argument("--mel-critic", action="store_true", help="Add a critic on the Vocos log-mel above 1 kHz (what the neural vocoder reads)")
+    parser.add_argument("--texture", type=float, default=0.0, help="Weight of the texture loss above 2 kHz (variability of the Vocos mel, 0 = off)")
     parser.add_argument("--pitch-delta", type=float, default=0.0, help="Weight of the frame-to-frame pitch-change loss (against tremble; 0 = off)")
     parser.add_argument("--crops", type=int, default=2, help="Discriminator windows per utterance")
     parser.add_argument("--teacher-hold", type=int, default=3000, help="Steps with recorded prosody conditioning only")
@@ -628,6 +654,8 @@ def main():
         recipe["mel_critic"] = True
     if args.pitch_delta:
         recipe["pitch_delta"] = args.pitch_delta
+    if args.texture:
+        recipe["texture"] = args.texture
     recipe["weights"] = {**WEIGHTS, **{key: float(value) for key, value in args.weights.items()}}
     recipe["branched_from"] = None
     recipe["adaptation"] = adaptation
