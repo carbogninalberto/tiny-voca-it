@@ -113,8 +113,12 @@
   "surprise",
   "disgust"
  ],
- "vocoder_step": 210000,
+ "vocoder_step": 225000,
  "vocoder_voice_high_gain": [
+  [
+   "EM4",
+   0.0
+  ],
   [
    "IT1",
    0.0
