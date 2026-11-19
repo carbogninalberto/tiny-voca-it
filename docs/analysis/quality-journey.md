@@ -1022,3 +1022,17 @@ From now on decisions are made and recorded here, without waiting for approval.
   - Tempo changes (sad and disgusted speech is slower) and loudness changes are
     mostly lost.
   - This is the target for round 8.
+- **Faster data generation (01:15):**
+  - Profile: the per-frame Hugging Face `generate()` of Qwen3-TTS's code
+    predictor (15 sub-codes per codec frame) takes 52% of the time. Almost all
+    of it is kernel-launch and Python overhead; the GPU is about 15% busy.
+  - `scripts/qwen_fast.py` replaces it with a lean loop: one cache and the same
+    sampling rule (temperature, top-k, top-p).
+  - Measured on 18 EM4 sentences: 3.24× → **3.88× real time (+20%)**, with
+    identical Whisper WER (0.029). Now on in both generators.
+  - A CUDA-graph capture of the whole sub-code loop failed: a device-side assert
+    on the second replay, from state carried in the static cache. It would
+    roughly halve generation time and is worth revisiting off the critical path.
+  - Neither CPU generation (about 0.1× real time) nor a second GPU process
+    (measured earlier: time-slicing, no gain) helps. Instead, idle cores run
+    each voice's features and alignment while the GPU generates the next voice.

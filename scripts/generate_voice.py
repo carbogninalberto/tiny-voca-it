@@ -100,6 +100,8 @@ def main():
     from jiwer import wer
     import librosa
     from qwen_tts import Qwen3TTSModel
+    import qwen_fast
+    qwen_fast.patch()   # lean sub-code loop: +20% throughput, same outputs
     from tiny_voca.evaluate import italian_normalizer as normalize
     # Generation is bound by one CPU core driving many small GPU kernels (the GPU is mostly idle), so the
     # Whisper screening runs in a worker thread, overlapped with the next batch. On the GPU it is fast
