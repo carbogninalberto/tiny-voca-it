@@ -1165,3 +1165,13 @@ From now on decisions are made and recorded here, without waiting for approval.
     intelligibility is the same for int8 and slightly lower for int4.
   - A blind test (Q files, key `quant-key.json`) decides which go to the page
     and the release.
+- **Quantization decision (12:30):**
+  - Blind listening: the user heard no difference between fp32, fp16, int8 and
+    int4.
+  - Decision: int8 is the browser default, following the data (int4 measured
+    +0.6 WER points).
+  - ONNX Runtime Web 1.20 has no `ConvInteger` kernel, so the browser int8 file
+    quantizes MatMul only and stores the other large weights as fp16. It is
+    8.6 MB. Whisper-small WER on 40 sentences: 3.95% against 3.72% for fp32,
+    within noise.
+  - Live on Pages: the first download drops from 47 MB to 8.6 MB.

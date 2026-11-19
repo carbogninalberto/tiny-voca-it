@@ -4,7 +4,8 @@
 
 - ``fp16w``: every large float weight stored in fp16 and cast back to fp32 when the graph runs (half the
   download, unchanged arithmetic; the browser's WebAssembly backend computes in fp32 anyway).
-- ``int8``: dynamic quantization (int8 weights, per-batch activation scales) of MatMul and Conv.
+- ``int8``: dynamic quantization (int8 weights, per-batch activation scales) of MatMul; other large weights as in ``fp16w``
+  (ONNX Runtime Web has no ConvInteger kernel).
 - ``int4``: MatMul weights in 4-bit blocks of 32 (``MatMulNBits``); the remaining weights as in ``fp16w``.
 
 The STFT kernels are computed inside the graph from the windows (``export._runtime_kernels``), so they are
@@ -55,8 +56,10 @@ def main():
     onnx.save(fp16_weights(onnx.load(a.input)), out["fp16w"])
 
     from onnxruntime.quantization import QuantType, quantize_dynamic
-    quantize_dynamic(str(a.input), str(out["int8"]), weight_type=QuantType.QInt8, op_types_to_quantize=["MatMul", "Conv"],
+    # MatMul only (ONNX Runtime Web has no ConvInteger); other large weights stored as fp16.
+    quantize_dynamic(str(a.input), str(out["int8"]), weight_type=QuantType.QInt8, op_types_to_quantize=["MatMul"],
                      extra_options={"MatMulConstBOnly": True})
+    onnx.save(fp16_weights(onnx.load(out["int8"])), out["int8"])
 
     from onnxruntime.quantization.matmul_nbits_quantizer import DefaultWeightOnlyQuantConfig, MatMulNBitsQuantizer
     model = onnx.load(a.input)

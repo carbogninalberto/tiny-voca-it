@@ -56,6 +56,18 @@ PREVIEW_ENTRY=""
 if [ -n "${PREVIEW_VOICE:-}" ]; then
   VOICES_JSON=$(printf '"%s", ' ${PREVIEW_VOICES:-IT1 EF3}); VOICES_JSON="[${VOICES_JSON%, }]"
   "$PYTHON" -W ignore -m tiny_voca.export --checkpoint "$PREVIEW_VOICE" --vocoder "$PREVIEW_VOCODER" --output "$OUT/models/tiny-voca-it-preview.onnx"
+  if [ "${PREVIEW_QUANT:-int8}" = "int8" ]; then
+    # int8 weights (dynamic quantization of MatMul/Conv): 28 -> 8 MB, same intelligibility (decision log 6.11).
+    # MatMul only: ONNX Runtime Web has no ConvInteger kernel; the other large weights are stored as fp16.
+    "$PYTHON" -c "
+import sys; sys.path.insert(0, 'scripts'); import onnx
+from onnxruntime.quantization import QuantType, quantize_dynamic
+from quantize_onnx import fp16_weights
+quantize_dynamic(sys.argv[1], sys.argv[2], weight_type=QuantType.QInt8, op_types_to_quantize=['MatMul'], extra_options={'MatMulConstBOnly': True})
+onnx.save(fp16_weights(onnx.load(sys.argv[2])), sys.argv[2])" \
+      "$OUT/models/tiny-voca-it-preview.onnx" "$OUT/models/tiny-voca-it-preview.int8.onnx"
+    mv "$OUT/models/tiny-voca-it-preview.int8.onnx" "$OUT/models/tiny-voca-it-preview.onnx"
+  fi
   STAMP=$(TZ=Europe/Rome date "+%Y-%m-%d %H:%M")
   PREVIEW_ENTRY="  {\"id\": \"preview\", \"file\": \"tiny-voca-it-preview\", \"label\": \"${PREVIEW_LABEL:-Preview} · updated $STAMP\", \"voice\": \"${PREVIEW_DEFAULT:-IT1}\", \"voices\": $VOICES_JSON}"
 fi
