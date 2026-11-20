@@ -1378,3 +1378,21 @@ From now on decisions are made and recorded here, without waiting for approval.
     (0.30–0.35) and ranks the user 1st of 96. Still below acceptance (0.538): the linear map averages
     frames (smoothing), and prosody/articulation stay Lorenzo's.
   - Browser-feasible: fitting is a 100×100 least-squares solve; applying it is one matrix per frame.
+- **Tiny convolutional voice filter (20 November, CPU, 17–170 s training).** Residual network on top of the
+  linear + per-phoneme filter: Conv1d(100→C, kernel 5) → GELU → Conv1d(C→100), last layer zero-initialised.
+  Pairs: Lorenzo forced to the target's durations and pitch. Data: the user's 5 clips (3.9k frames), plus
+  46 Qwen3-TTS clips in the user's voice from the teacher check (14.9k frames). Script:
+  `scripts/research/conv_filter.py`. ECAPA vs the first-session comparison clip (not used for fitting; the
+  second session scores are inflated because its clips were fitted):
+
+  | Filter | numbers | ECAPA (fair) | rank /96 | vs 2nd session |
+  |---|---|---|---|---|
+  | linear + per-phoneme (user clips) | ~16k | 0.341 | 1 | 0.453 |
+  | conv C=16 (user clips) | +9.7k | 0.301 | 2 | 0.424 |
+  | conv C=48 (user clips) | +29k | 0.329 | 2 | 0.486 |
+  | conv C=16 (user + Qwen) | +9.7k | 0.381 | 1 | 0.459 |
+  | **conv C=48 (user + Qwen)** | **+29k** | **0.404** | **1** | 0.514 |
+
+  - On user clips alone the network overfits after ~100 steps and gains nothing; with Qwen speech in the
+    user's voice it trains for 1,200–1,500 steps and gives the best result so far (0.40), still below 0.538.
+  - Data, not filter size, is the lever: next is ~10–30 min of Qwen speech in the target voice.
