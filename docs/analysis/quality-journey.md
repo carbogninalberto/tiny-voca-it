@@ -1361,3 +1361,20 @@ From now on decisions are made and recorded here, without waiting for approval.
   cannot. Fable's second review: the zero-shot base caps at 0.33 on real speakers, seen or unseen
   (3.3 h of real speech, 95 speakers). Direction chosen by the user: zero-shot. Plan: distil it from
   the teacher over thousands of cloned voices (see the roadmap entry).
+- **Parallel-filter pilot (20 November, CPU only, no training).** Lorenzo says the user's own sentences
+  with the user's phoneme durations and pitch, so the two Vocos log-mels align frame by frame. Closed-form
+  filters from Lorenzo's mel to the user's (fit on 5 aligned clips, ~3,900 frames), then applied to new
+  Lorenzo sentences (pitch +1.8 semitones) and rendered by our vocoder. Script: `scripts/research/parallel_filter.py`.
+
+  | Filter | numbers | held-out-clip mel L1 | ECAPA vs other session | rank /96 |
+  |---|---|---|---|---|
+  | none (pitch only) | 2 | 1.415 | 0.097 | 59 |
+  | global bias | 100 | 1.167 | 0.125 | 38 |
+  | per-phoneme bias | ~6k | 0.989 | 0.268 | 7 |
+  | linear 100×100 | ~10k | 0.733 | 0.315 | 2 |
+  | **linear + per-phoneme** | ~16k | 0.739 | **0.341** | **1** |
+
+  - A 16k-number filter fitted in milliseconds, with no gradient, matches the best few-shot result
+    (0.30–0.35) and ranks the user 1st of 96. Still below acceptance (0.538): the linear map averages
+    frames (smoothing), and prosody/articulation stay Lorenzo's.
+  - Browser-feasible: fitting is a 100×100 least-squares solve; applying it is one matrix per frame.
