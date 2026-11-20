@@ -1396,3 +1396,15 @@ From now on decisions are made and recorded here, without waiting for approval.
   - On user clips alone the network overfits after ~100 steps and gains nothing; with Qwen speech in the
     user's voice it trains for 1,200–1,500 steps and gives the best result so far (0.40), still below 0.538.
   - Data, not filter size, is the lever: next is ~10–30 min of Qwen speech in the target voice.
+- **Conv filter with 20 min of Qwen speech in the user's voice** (234 clips generated in 7 min of GPU,
+  222 aligned, 110k paired frames; clip mini-batches of 32, 4,000 steps, best at 2,400; 5 min CPU each):
+
+  | Filter | numbers | ECAPA vs 1st-session clip (fair) | vs 2nd session (fitted, inflated) |
+  |---|---|---|---|
+  | previous best: conv C=48, 4 min Qwen | ~45k | 0.404 | 0.514 |
+  | linear + per-phoneme, 20 min | ~16k | 0.365 | 0.469 |
+  | conv C=48, 20 min | ~45k | 0.434 | 0.553 |
+  | **conv C=96, 20 min** | **~74k** | **0.451** | 0.559 |
+
+  - Rank 1 of 96 in every case. More paired speech keeps helping (0.40 → 0.43 at the same size); a wider
+    network adds a little (0.45). The fair score is still below 0.538; the gap is ~0.09.

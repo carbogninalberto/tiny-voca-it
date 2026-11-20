@@ -50,20 +50,21 @@ def tensors(clips, f):
 def train(net, data, weights, steps, val=None):
     opt = torch.optim.AdamW(net.parameters(), 3e-3, weight_decay=1e-2); best = (9e9, 0); curve = []
     for s in range(1, steps + 1):
-        loss = sum(w * (net(x) - y)[..., mk].abs().mean() for (x, y, mk), w in zip(data, weights)) / sum(weights)
+        pick = np.random.default_rng(s).choice(len(data), min(32, len(data)), replace=False)
+        loss = sum(weights[i] * (net(data[i][0]) - data[i][1])[..., data[i][2]].abs().mean() for i in pick) / sum(weights[i] for i in pick)
         opt.zero_grad(); loss.backward(); opt.step()
         if val is not None and s % 100 == 0:
             with torch.no_grad(): v = float(sum((net(x) - y)[..., mk].abs().mean() for x, y, mk in val) / len(val))
             curve.append((s, round(v, 4))); best = min(best, (v, s))
     return best, curve
 results, final = {}, {}
-for name, use_teacher in (("user", False), ("user+qwen", True)):
+for name, use_teacher in (("user+qwen20", True),):
     tr = [c for i, c in enumerate(user) if i != held] + (teacher if use_teacher else [])
     f = fit_base(tr); val = tensors([user[held]], f)
     with torch.no_grad(): base_l1 = float((val[0][0] - val[0][1])[..., val[0][2]].abs().mean())
-    w = [2.0 if i < len(user) - 1 else 1.0 for i in range(len(tr))]
-    for c in (16, 48):
-        net = Net(c); t0 = time.time(); (v, s), curve = train(net, tensors(tr, f), w, 2000, val)
+    w = [4.0 if i < len(user) - 1 else 1.0 for i in range(len(tr))]
+    for c in (48, 96):
+        net = Net(c); t0 = time.time(); (v, s), curve = train(net, tensors(tr, f), w, 4000, val)
         params = sum(p.numel() for p in net.parameters())
         results[f"{name} conv{c}"] = {"params": params, "base_linear_phone_L1": round(base_l1, 4), "conv_best_L1": round(v, 4), "best_step": s, "train_s": round(time.time() - t0, 1)}
         print(json.dumps({f"{name} conv{c}": results[f"{name} conv{c}"]}), flush=True)
@@ -87,12 +88,12 @@ def render(path, mel_fn):
             parts += [voc(torch.tensor(mel, dtype=torch.float32)[None] if mel.shape[0] == 100 else torch.tensor(mel.T, dtype=torch.float32)[None],
                           m.frequency(pr[:, 0])[None].float(), (pr[:, 1] > 0).float()[None], voice="EM4")[0].numpy(), np.zeros(12000)]
     x = np.concatenate(parts); sf.write(path, x * min(0.1 / np.sqrt(np.mean(x ** 2)), 0.95 / np.abs(x).max()), 24000, subtype="PCM_16")
-for name, use_teacher in (("user", False), ("user+qwen", True)):
+for name, use_teacher in (("user+qwen20", True),):
     tr = user + (teacher if use_teacher else []); f = fit_base(tr)
     tag = name.replace("+", "-")
     if use_teacher: render(f"{S}/myvoice/conv-linear-{tag}.wav", lambda xl, Pt: base(f, xl, Pt))
-    for c in (16, 48):
-        net = Net(c); w = [2.0 if i < len(user) else 1.0 for i in range(len(tr))]
+    for c in (48, 96):
+        net = Net(c); w = [4.0 if i < len(user) else 1.0 for i in range(len(tr))]
         train(net, tensors(tr, f), w, max(final[(name, c)], 100))
         render(f"{S}/myvoice/conv{c}-{tag}.wav", lambda xl, Pt: net(torch.tensor(base(f, xl, Pt).T[None], dtype=torch.float32))[0].numpy())
         torch.save({"net": net.state_dict(), "base": f}, f"{S}/oracle2/conv{c}-{tag}.pt")
